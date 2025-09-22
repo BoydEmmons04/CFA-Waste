@@ -1,0 +1,12 @@
+{
+  "data" : [
+    {
+      "filename" : "Names.txt",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
