@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import FirebaseAuth
 
 // MARK: - Report Types
 fileprivate enum ReportScope: String, CaseIterable, Identifiable {
@@ -22,6 +23,8 @@ struct GraphView: View {
     @AppStorage("GraphView.endKey") private var storedEndKey: String = ""
     @AppStorage("GraphView.selectedGroup") private var storedGroup: String = "__ALL__"
     @State private var selectedGroup: String = "__ALL__"
+    // Live Firestore groups (id/title/order/enabled)
+    @State private var groups: [GroupInfo] = []
 
     // Hydration state
     @State private var hydratedItems: [ButtonObject] = []
@@ -56,6 +59,21 @@ struct GraphView: View {
             if let d = Self.dateFromKey(storedStartKey) { startDate = d }
             if let e = Self.dateFromKey(storedEndKey) { endDate = e }
             selectedGroup = storedGroup
+            // Attach dynamic groups listener
+            let storeId = Auth.auth().currentUser?.uid ?? "UnknownUser"
+            FirebaseService.shared.listenGroups(forUserId: storeId, includeDisabled: false) { result in
+                switch result {
+                case .success(let fetched):
+                    // Keep the server order
+                    self.groups = fetched.sorted { $0.order < $1.order }
+                    // If the stored selection is no longer valid, fall back to All
+                    if self.selectedGroup != allGroupToken && !self.groups.contains(where: { $0.id == self.selectedGroup }) {
+                        self.selectedGroup = allGroupToken
+                    }
+                case .failure(let err):
+                    print("GraphView groups error:", err)
+                }
+            }
             Task { await hydrateData() }
         }
         .onChange(of: scope) { newScope in
@@ -84,6 +102,9 @@ struct GraphView: View {
                     isLoading: $isDetailLoading
                 )
             }
+        }
+        .onDisappear {
+            FirebaseService.shared.stopGroups()
         }
     }
 
@@ -511,13 +532,18 @@ private extension GraphView {
         #endif
     }
     var groupKeys: [String] {
-        // Internal keys: "__ALL__" + raw Firestore group keys (including empty string for no-group)
+        if !groups.isEmpty {
+            let orderedIds = groups.sorted { $0.order < $1.order }.map { $0.id }
+            return [allGroupToken] + orderedIds
+        }
+        // Fallback: derive from items we have
         let keys = groupedItems.keys.sorted()
         return [allGroupToken] + keys
     }
 
     func displayName(for key: String) -> String {
         if key == allGroupToken { return "All" }
+        if let g = groups.first(where: { $0.id == key }) { return g.title }
         return key.isEmpty ? "(No Group)" : key
     }
 
@@ -678,11 +704,15 @@ private extension GraphView {
 // MARK: - Date Helpers
 private extension GraphView {
     static func key(for date: Date) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = cal.startOfDay(for: date)
         let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
+        df.calendar = cal
         df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone.current
-        return df.string(from: Calendar.current.startOfDay(for: date))
+        df.timeZone = TimeZone(secondsFromGMT: 0)
+        df.dateFormat = "yyyy-MM-dd"
+        return df.string(from: start)
     }
 
     static func displayLabel(for date: Date) -> String {
@@ -725,9 +755,10 @@ private extension GraphView {
     static func dateFromKey(_ key: String) -> Date? {
         guard !key.isEmpty else { return nil }
         let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
+        df.calendar = Calendar(identifier: .gregorian)
         df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone.current
+        df.timeZone = TimeZone(secondsFromGMT: 0)
+        df.dateFormat = "yyyy-MM-dd"
         return df.date(from: key)
     }
 }

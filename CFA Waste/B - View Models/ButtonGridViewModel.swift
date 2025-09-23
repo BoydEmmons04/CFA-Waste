@@ -7,9 +7,10 @@ import FirebaseFirestore
 class ButtonGridViewModel: ObservableObject {
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
+        f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
         return f
     }()
     
@@ -25,6 +26,10 @@ class ButtonGridViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let db = Firestore.firestore()
     private var didHydrateToday: Bool = false
+    
+    // Tracks the currently bound group/date so we can refresh intelligently
+    private var currentGroupId: String = ""
+    private var currentDateKey: String = ""
 
     private let userId: String
 
@@ -43,6 +48,43 @@ class ButtonGridViewModel: ObservableObject {
                 Task { await self?.handleDateChange(newDate) }
             }
             .store(in: &cancellables)
+    }
+
+    /// Bind the grid to a selected group & date. Call from the view onAppear and when either value changes.
+    /// This keeps network work minimal by only fetching when the group or day key changes, or if we have no data.
+    func bind(groupId: String, date: Date) {
+        let key = formatDate(date)
+        let changed = buttons.isEmpty || groupId != currentGroupId || key != currentDateKey
+
+        // Track selection
+        currentGroupId = groupId
+        currentDateKey = key
+        if !Calendar.current.isDate(selectedDate, inSameDayAs: date) {
+            selectedDate = date
+        }
+
+        guard changed else { return }
+
+        // 1) Eagerly fetch snapshot to hydrate UI before user taps
+        Task { [weak self] in
+            guard let self = self else { return }
+            await self.fetchButtons(for: date)
+
+            // 2) Then attach live listeners for subsequent updates
+            FirebaseService.shared.stopButtons()
+
+            FirebaseService.shared.listenButtons(storeId: self.userId, groupId: groupId) { [weak self] result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let items):
+                        self?.buttons = items
+                        self?.sortButtons()
+                    case .failure(let err):
+                        self?.errorMessage = "Buttons listen error: \(err.localizedDescription)"
+                    }
+                }
+            }
+        }
     }
     
     // MARK: - Update Tally in Firestore for a Specific Date
@@ -85,6 +127,7 @@ class ButtonGridViewModel: ObservableObject {
 
         // Update local state to reflect the requested tally
         buttons[index].tallies[key] = clamped
+        self.objectWillChange.send()
     }
 
     // MARK: - Increment Tally for a Specific Date
@@ -103,6 +146,7 @@ class ButtonGridViewModel: ObservableObject {
 
         // Update locally for immediate UI feedback
         buttons[index].tallies[key] = next
+        self.objectWillChange.send()
 
         if amount < 0 {
             let pendingKey = "\(button.id)|\(key)"
@@ -138,6 +182,7 @@ class ButtonGridViewModel: ObservableObject {
                         await MainActor.run {
                             self.buttons[index].tallies[key] = current
                             self.errorMessage = "Queued decrement failed: \(error.localizedDescription)"
+                            self.objectWillChange.send()
                         }
                     }
                 } else {
@@ -145,6 +190,7 @@ class ButtonGridViewModel: ObservableObject {
                     await MainActor.run {
                         self.buttons[index].tallies[key] = current
                         self.errorMessage = "Decrement failed: \(error.localizedDescription)"
+                        self.objectWillChange.send()
                     }
                 }
             }
@@ -288,7 +334,7 @@ class ButtonGridViewModel: ObservableObject {
                 "name": updated.name,
                 "cost": updated.cost,
                 "color": updated.color,
-                "group": updated.group,
+                "groupId": updated.group,
                 "order": updated.order,
                 "image": updated.image
             ], merge: true)
@@ -383,7 +429,9 @@ class ButtonGridViewModel: ObservableObject {
 
     // MARK: - Date Formatting
     func formatDate(_ date: Date) -> String {
-        let day = Calendar.current.startOfDay(for: date)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let day = cal.startOfDay(for: date)
         return Self.dateFormatter.string(from: day)
     }
 
@@ -398,12 +446,14 @@ class ButtonGridViewModel: ObservableObject {
         }
 
         let userDoc = db.collection("users").document(userId)
-        let newDay = Calendar.current.startOfDay(for: newDate)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let newDay = cal.startOfDay(for: newDate)
         let newKey = Self.dateFormatter.string(from: newDay)
 
         // 1) Archive if moving forward
         if newDate > previousDate, didHydrateToday {
-            let oldDay = Calendar.current.startOfDay(for: previousDate)
+            let oldDay = cal.startOfDay(for: previousDate)
             let oldKey = Self.dateFormatter.string(from: oldDay)
             for button in buttons {
                 let oldCount = button.tallies[oldKey] ?? 0

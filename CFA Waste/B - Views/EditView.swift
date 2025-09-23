@@ -44,8 +44,12 @@ struct EditView: View {
     @State private var selectedColor: Color
     @State private var selectedGroup: String
 
+    // Optional dynamic groups provided by parent (e.g., RadialView / ButtonGridView)
+    let availableGroups: [GroupInfo]?
+
     init(button: Binding<ButtonObject>,
          isPresented: Binding<Bool>,
+         availableGroups: [GroupInfo]? = nil,
          onSave: @escaping (ButtonObject) -> Void) {
         self._button = button
         self._isPresented = isPresented
@@ -57,6 +61,7 @@ struct EditView: View {
         _selectedImage = State(initialValue: b.image)
         _selectedColor = State(initialValue: Self.colorFromString(b.color))
         _selectedGroup = State(initialValue: b.group)
+        self.availableGroups = availableGroups
     }
 
     // Parse cost text into a Double, allowing "$" and commas
@@ -66,11 +71,6 @@ struct EditView: View {
             .replacingOccurrences(of: ",", with: "")
             .replacingOccurrences(of: "$", with: "")
         return Double(cleaned) ?? fallback
-    }
-
-    // Merge defaults with current selections so the picker always shows all known groups
-    private var allGroups: [String] {
-        Array(Set(defaultAvailableGroups + [button.group, selectedGroup])).sorted()
     }
 
     // Merge defaults with current image so the picker always includes what's already saved
@@ -157,21 +157,6 @@ struct EditView: View {
                         .labelsHidden()
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.1)))
-                }
-                .padding(.horizontal)
-
-                // Group Picker
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Group")
-                        .font(.headline)
-                    Picker("Group", selection: $selectedGroup) {
-                        ForEach(allGroups, id: \.self) { grp in
-                            Text(grp).tag(grp)
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.1)))
                 }
                 .padding(.horizontal)
 

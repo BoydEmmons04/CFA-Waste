@@ -3,43 +3,40 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var buttonViewModel: ButtonGridViewModel
-    @State private var selectedView: String = "FOH"
+    @State private var selectedView: String = ""
     @State private var isShowingAddButtonView = false
     @State private var isMovingButtons = false
     @State private var isShowingSignOutAlert = false
     @Namespace private var categoryNS
 
+    @State private var groups: [GroupInfo] = []
+
+    // Dynamic items sourced from Firestore groups
     private var categoryItems: [(key: String, label: String)] {
-        [
-            ("FOH", "FOH"),
-            ("Shared Table", "Shared Table"),
-            ("Breakfast", "Breakfast"),
-            ("Lunch", "Lunch"),
-            ("Raw", "Raw"),
-            ("Prep", "Prep")
-        ]
+        groups.map { ($0.id, $0.title) }
     }
 
     var body: some View {
         NavigationStack {
             VStack {
-                switch selectedView {
-                case "FOH":
-                    FOHView(viewModel: buttonViewModel, isMoving: $isMovingButtons, selectedDate: buttonViewModel.selectedDate)
-                case "Shared Table":
-                    SharedTableView(viewModel: buttonViewModel, isMoving: $isMovingButtons, selectedDate: buttonViewModel.selectedDate)
-                case "Breakfast":
-                    BreakfastView(viewModel: buttonViewModel, isMoving: $isMovingButtons, selectedDate: buttonViewModel.selectedDate)
-                case "Lunch":
-                    LunchView(viewModel: buttonViewModel, isMoving: $isMovingButtons, selectedDate: buttonViewModel.selectedDate)
-                case "Raw":
-                    RawView(viewModel: buttonViewModel, isMoving: $isMovingButtons, selectedDate: buttonViewModel.selectedDate)
-                case "Prep":
-                    PrepView(viewModel: buttonViewModel, isMoving: $isMovingButtons, selectedDate: buttonViewModel.selectedDate)
-                default:
-                    Text("Unknown View")
-                        .font(.largeTitle)
-                        .padding()
+                if let current = groups.first(where: { $0.id == selectedView }) {
+                    DynamicGroupView(
+                        buttonGridVM: buttonViewModel,
+                        groupId: current.id,
+                        isMoving: $isMovingButtons,
+                        selectedDate: buttonViewModel.selectedDate,
+                        availableGroups: groups
+                    )
+                } else {
+                    VStack(spacing: 12) {
+                        if groups.isEmpty {
+                            ProgressView()
+                            Text("Loading groups…").foregroundColor(.secondary)
+                        } else {
+                            Text("Select a group").foregroundColor(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -101,7 +98,19 @@ struct HomeView: View {
             Text("Are you sure you want to sign out?")
         }
         .sheet(isPresented: $isShowingAddButtonView) {
-            AddButtonView(viewModel: buttonViewModel, group: selectedView)
+            AddButtonView(
+                viewModel: buttonViewModel,
+                group: selectedView,
+                onGroupAdded: { newGroup in
+                    if let idx = groups.firstIndex(where: { $0.id == newGroup.id }) {
+                        groups[idx] = newGroup
+                    } else {
+                        groups.append(newGroup)
+                    }
+                    groups.sort { $0.order < $1.order }
+                    selectedView = newGroup.id
+                }
+            )
         }
         .safeAreaInset(edge: .bottom) {
             AppStoreCategoryPicker(
@@ -110,6 +119,21 @@ struct HomeView: View {
                 ns: categoryNS
             )
             .padding(.bottom, 8)
+        }
+        .onAppear {
+            let storeId = authViewModel.userId ?? "UnknownUser"
+            FirebaseService.shared.listenGroups(forUserId: storeId, includeDisabled: false) { result in
+                switch result {
+                case .success(let fetched):
+                    self.groups = fetched
+                    if self.selectedView.isEmpty, let first = fetched.first { self.selectedView = first.id }
+                case .failure(let err):
+                    print("Groups listen error:", err)
+                }
+            }
+        }
+        .onDisappear {
+            FirebaseService.shared.stopGroups()
         }
         
     }

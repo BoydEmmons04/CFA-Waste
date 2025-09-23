@@ -7,7 +7,7 @@ struct RadialView: View {
     let onIncrement: (Int, Date) -> Void // ✅ Updates correct date
     let onDelete: () -> Void // Callback for deletion
     let availableImages: [String]
-    let availableGroups: [String]
+    let availableGroups: [GroupInfo]
     let onSave: (ButtonObject) -> Void
 
     @State private var isNegativeMode = false // Toggle positive/negative mode
@@ -148,8 +148,12 @@ struct RadialView: View {
         onDelete: {
             print("Button Deleted")
         },
-        availableImages: ["cart", "star", "heart"], 
-        availableGroups: ["FOH", "BOH", "Management"],
+        availableImages: ["cart", "star", "heart"],
+        availableGroups: [
+            GroupInfo(id: "FOH", title: "FOH", icon: nil, order: 0, isEnabled: true, timestamp: nil),
+            GroupInfo(id: "BOH", title: "BOH", icon: nil, order: 1, isEnabled: true, timestamp: nil),
+            GroupInfo(id: "Management", title: "Management", icon: nil, order: 2, isEnabled: true, timestamp: nil)
+        ],
         onSave: { updatedButton in
             print("Saved button: \(updatedButton)")
         }

@@ -6,6 +6,9 @@ struct DashboardView: View {
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
@@ -14,7 +17,7 @@ struct DashboardView: View {
         _viewModel = StateObject(wrappedValue: DashboardViewModel(userId: userId))
     }
 
-    private let groups = ["FOH", "Shared Table", "Breakfast", "Lunch", "Raw", "Prep"]
+    @State private var groups: [GroupInfo] = []
 
     var body: some View {
         NavigationStack {
@@ -33,27 +36,30 @@ struct DashboardView: View {
                         .font(.title2)
                         .foregroundColor(.gray)
                         .padding()
+                } else if groups.isEmpty {
+                    ProgressView()
+                        .padding()
                 } else {
                     List {
-                        ForEach(groups, id: \.self) { group in
+                        ForEach(groups, id: \.id) { group in
                             let formattedDate = Self.dateFormatter.string(from: viewModel.selectedDate)
-                            
+
                             let totalForGroup = viewModel.buttonObjects
-                                .filter { $0.group == group }
+                                .filter { $0.group == group.id }
                                 .map { viewModel.getTotalCost(for: $0, on: formattedDate) }
                                 .reduce(0, +)
-                            
+
                             let sortedButtons = viewModel.buttonObjects
-                                .filter { $0.group == group }
+                                .filter { $0.group == group.id }
                                 .sorted {
                                     viewModel.getTotalCost(for: $0, on: formattedDate) >
                                     viewModel.getTotalCost(for: $1, on: formattedDate)
                                 }
-                            
+
                             if !sortedButtons.isEmpty {
                                 Section(header:
                                     HStack {
-                                        Text(group)
+                                        Text(group.title)
                                             .font(.title)
                                             .bold()
                                         Spacer()
@@ -68,7 +74,7 @@ struct DashboardView: View {
                                                 .resizable()
                                                 .scaledToFit()
                                                 .frame(width: 40, height: 40)
-                                            
+
                                             VStack(alignment: .leading) {
                                                 Text(button.name)
                                                     .font(.headline)
@@ -76,9 +82,9 @@ struct DashboardView: View {
                                                     .font(.subheadline)
                                                     .foregroundColor(.gray)
                                             }
-                                            
+
                                             Spacer()
-                                            
+
                                             Text("\(viewModel.getTally(for: button, on: formattedDate))")
                                                 .font(.title)
                                                 .bold()
@@ -128,10 +134,31 @@ struct DashboardView: View {
                 }
             }
             .onAppear {
+                let storeId = authViewModel.userId ?? "UnknownUser"
+                attachGroupsListener(for: storeId, includeDisabled: false)
                 Task {
                     await viewModel.loadButtonObjects(for: viewModel.selectedDate)
                     await viewModel.loadWeeklyData(relativeTo: viewModel.selectedDate)
                 }
+            }
+            .onDisappear {
+                FirebaseService.shared.stopGroups()
+            }
+            .onChange(of: authViewModel.userId) { newId in
+                FirebaseService.shared.stopGroups()
+                let storeId = newId ?? "UnknownUser"
+                attachGroupsListener(for: storeId, includeDisabled: false)
+            }
+        }
+    }
+    // MARK: - Groups listener
+    private func attachGroupsListener(for storeId: String, includeDisabled: Bool) {
+        FirebaseService.shared.listenGroups(forUserId: storeId, includeDisabled: includeDisabled) { result in
+            switch result {
+            case .success(let fetched):
+                self.groups = fetched.sorted { $0.order < $1.order }
+            case .failure(let err):
+                print("Dashboard groups error:", err)
             }
         }
     }

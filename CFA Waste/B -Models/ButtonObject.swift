@@ -12,6 +12,19 @@ struct ButtonObject: Identifiable, Codable, Hashable {
     var order: Int // Used for ordering buttons
     var timestamp: Date // Creation or last-modified timestamp
 
+    // Map Swift `group` to Firestore field `groupId` to align with new queries
+    enum CodingKeys: String, CodingKey {
+        case id
+        case image
+        case color
+        case name
+        case cost
+        case tallies
+        case group = "groupId"   // <-- Firestore uses `groupId`
+        case order
+        case timestamp
+    }
+
     // MARK: - Initializer
     init(
         id: String = UUID().uuidString,

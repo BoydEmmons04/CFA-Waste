@@ -18,16 +18,24 @@ class FirebaseService {
     private init() {}
 
     private var groupsListener: ListenerRegistration?
+    private var buttonsListener: ListenerRegistration?
+    private var talliesListener: ListenerRegistration?
 
     // MARK: - Date Formatter
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
 
     private func formatDate(_ date: Date) -> String {
-        return FirebaseService.dateFormatter.string(from: date)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = cal.startOfDay(for: date)
+        return FirebaseService.dateFormatter.string(from: start)
     }
 
     private func isToday(_ date: Date) -> Bool {
@@ -62,7 +70,7 @@ class FirebaseService {
                 name: data["name"] as? String ?? "",
                 cost: data["cost"] as? Double ?? 0.0,
                 tallies: tallies,
-                group: data["group"] as? String ?? "",
+                group: (data["groupId"] as? String) ?? (data["group"] as? String) ?? "",
                 order: data["order"] as? Int ?? 0,
                 timestamp: data["timestamp"] as? Timestamp != nil
                     ? (data["timestamp"] as! Timestamp).dateValue()
@@ -85,7 +93,7 @@ class FirebaseService {
             "color": button.color,
             "name": button.name,
             "cost": button.cost,
-            "group": button.group,
+            "groupId": button.group,
             "order": button.order,
             "timestamp": FieldValue.serverTimestamp(),
             "tallies": [today: button.tallies[today] ?? 0]
@@ -193,6 +201,65 @@ class FirebaseService {
             .collection("buttons")
             .document(buttonId)
             .delete()
+    }
+
+    // MARK: - Live Listeners: Buttons & Tallies
+
+    /// Listen for buttons in a specific group, ordered by `order`.
+    /// Returns full ButtonObject models; tallies map is taken directly from the doc (no zeroing).
+    func listenButtons(storeId: String,
+                       groupId: String,
+                       onChange: @escaping (Result<[ButtonObject], Error>) -> Void) {
+        // Stop any previous listener
+        buttonsListener?.remove()
+
+        let ref = db.collection("users").document(storeId).collection("buttons")
+            .whereField("groupId", isEqualTo: groupId)
+            .order(by: "order")
+
+        buttonsListener = ref.addSnapshotListener { [weak self] snapshot, error in
+            if let error = error {
+                onChange(.failure(error)); return
+            }
+            guard let snapshot = snapshot else {
+                onChange(.success([])); return
+            }
+
+            var result: [ButtonObject] = []
+            for doc in snapshot.documents {
+                let data = doc.data()
+                // Preserve any tallies present on the doc; do not overwrite with zeros.
+                let tallies = (data["tallies"] as? [String: Int]) ?? [:]
+
+                let button = ButtonObject(
+                    id: data["id"] as? String ?? doc.documentID,
+                    image: data["image"] as? String ?? "",
+                    color: data["color"] as? String ?? "",
+                    name: data["name"] as? String ?? "",
+                    cost: data["cost"] as? Double ?? 0.0,
+                    tallies: tallies,
+                    group: (data["groupId"] as? String) ?? (data["group"] as? String) ?? "",
+                    order: data["order"] as? Int ?? 0,
+                    timestamp: ((data["timestamp"] as? Timestamp)?.dateValue()) ?? Date()
+                )
+                result.append(button)
+            }
+            onChange(.success(result))
+        }
+    }
+
+    /// Stop listening to buttons.
+    func stopButtons() {
+        buttonsListener?.remove()
+        buttonsListener = nil
+    }
+
+    // listenTallies removed as requested
+
+    /// Stop listening to tallies.
+    func stopTallies() {
+        talliesListener?.remove()
+        talliesListener = nil
     }
 
     // MARK: - Groups (sibling to `buttons` under users/{userId})

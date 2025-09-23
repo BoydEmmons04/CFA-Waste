@@ -5,6 +5,7 @@ struct ButtonGridView: View {
     let group: String
     @Binding var isMoving: Bool
     let selectedDate: Date // Pass selected date to update displayed tallies
+    let availableGroups: [GroupInfo]
 
     @State private var selectedButton: ButtonObject?
     @State private var showRadialView = false
@@ -140,7 +141,7 @@ struct ButtonGridView: View {
                             }
                         },
                         availableImages: defaultAvailableImages,
-                        availableGroups: defaultAvailableGroups,
+                        availableGroups: availableGroups,
                         onSave: { updatedButton in
                             Task {
                                 await viewModel.updateButton(updatedButton)
@@ -163,14 +164,13 @@ struct ButtonGridView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .onAppear {
-            Task {
-                await viewModel.fetchButtons(for: selectedDate)
-            }
+            viewModel.bind(groupId: group, date: selectedDate)
         }
         .onChange(of: selectedDate) { newDate in
-            Task {
-                await viewModel.fetchButtons(for: newDate)
-            }
+            viewModel.bind(groupId: group, date: newDate)
+        }
+        .onChange(of: group) { newGroup in
+            viewModel.bind(groupId: newGroup, date: selectedDate)
         }
     }
     
