@@ -1,5 +1,13 @@
 import SwiftUI
 
+private func isUTCToday(_ d: Date) -> Bool {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(secondsFromGMT: 0)!
+    let start = cal.startOfDay(for: d)
+    let todayStart = cal.startOfDay(for: Date())
+    return start == todayStart
+}
+
 struct HomeView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var buttonViewModel: ButtonGridViewModel
@@ -70,7 +78,7 @@ struct HomeView: View {
                     Image(systemName: "plus")
                         .font(.title2)
                 }
-                .disabled(!Calendar.current.isDateInToday(buttonViewModel.selectedDate))
+                .disabled(!isUTCToday(buttonViewModel.selectedDate))
 
                 Button(action: {
                     isMovingButtons.toggle()
@@ -79,10 +87,10 @@ struct HomeView: View {
                         .font(.title2)
                 }
 
-                // Only show "List View" button on iPad
+                // Only show "Graph View" button on iPad
                 if UIDevice.current.userInterfaceIdiom == .pad {
-                    NavigationLink("List View") {
-                        DashboardView(userId: authViewModel.userId ?? "Unknown User")
+                    NavigationLink("Graph View") {
+                        GraphView()
                             .environmentObject(authViewModel)
                             .environmentObject(buttonViewModel)
                     }
