@@ -12,7 +12,12 @@ fileprivate enum ReportScope: String, CaseIterable, Identifiable {
 }
 
 struct GraphView: View {
-    @EnvironmentObject var viewModel: DashboardViewModel
+    @StateObject private var viewModel: GraphViewModel
+
+    init(userId: String? = nil) {
+        let uid = userId ?? Auth.auth().currentUser?.uid ?? "UnknownUser"
+        _viewModel = StateObject(wrappedValue: GraphViewModel(userId: uid))
+    }
 
     // MARK: - Selection state
     @State private var collapsedGroups: Set<String> = []
@@ -23,8 +28,6 @@ struct GraphView: View {
     @AppStorage("GraphView.endKey") private var storedEndKey: String = ""
     @AppStorage("GraphView.selectedGroup") private var storedGroup: String = "__ALL__"
     @State private var selectedGroup: String = "__ALL__"
-    // Live Firestore groups (id/title/order/enabled)
-    @State private var groups: [GroupInfo] = []
 
     // Hydration state
     @State private var hydratedItems: [ButtonObject] = []
@@ -59,21 +62,6 @@ struct GraphView: View {
             if let d = Self.dateFromKey(storedStartKey) { startDate = d }
             if let e = Self.dateFromKey(storedEndKey) { endDate = e }
             selectedGroup = storedGroup
-            // Attach dynamic groups listener
-            let storeId = Auth.auth().currentUser?.uid ?? "UnknownUser"
-            FirebaseService.shared.listenGroups(forUserId: storeId, includeDisabled: false) { result in
-                switch result {
-                case .success(let fetched):
-                    // Keep the server order
-                    self.groups = fetched.sorted { $0.order < $1.order }
-                    // If the stored selection is no longer valid, fall back to All
-                    if self.selectedGroup != allGroupToken && !self.groups.contains(where: { $0.id == self.selectedGroup }) {
-                        self.selectedGroup = allGroupToken
-                    }
-                case .failure(let err):
-                    print("GraphView groups error:", err)
-                }
-            }
             Task { await hydrateData() }
         }
         .onChange(of: scope) { newScope in
@@ -102,9 +90,6 @@ struct GraphView: View {
                     isLoading: $isDetailLoading
                 )
             }
-        }
-        .onDisappear {
-            FirebaseService.shared.stopGroups()
         }
     }
 
@@ -532,8 +517,14 @@ private extension GraphView {
         #endif
     }
     var groupKeys: [String] {
-        if !groups.isEmpty {
-            let orderedIds = groups.sorted { $0.order < $1.order }.map { $0.id }
+        if !viewModel.groups.isEmpty {
+            let orderedIds = viewModel.groups
+                .sorted { lhs, rhs in
+                    lhs.order == rhs.order
+                        ? (lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending)
+                        : (lhs.order < rhs.order)
+                }
+                .map { $0.id }
             return [allGroupToken] + orderedIds
         }
         // Fallback: derive from items we have
@@ -543,7 +534,7 @@ private extension GraphView {
 
     func displayName(for key: String) -> String {
         if key == allGroupToken { return "All" }
-        if let g = groups.first(where: { $0.id == key }) { return g.title }
+        if let g = viewModel.groups.first(where: { $0.id == key }) { return g.name }
         return key.isEmpty ? "(No Group)" : key
     }
 
@@ -636,14 +627,32 @@ private extension GraphView {
             let key = Self.key(for: startDate)
             return [totalsForDay(key: key)]
         case .weekly:
-            let keys = Self.days(from: startDate, count: 7).map(Self.key(for:))
-            return keys.map { dayKey in totalsForDay(key: dayKey) }
+            let keys = Self.days(from: startDate, count: 7).map { d in Self.key(for: d) }
+            var rows: [[String:Int]] = []
+            rows.reserveCapacity(keys.count)
+            for dayKey in keys {
+                rows.append(totalsForDay(key: dayKey))
+            }
+            return rows
         case .monthly:
             let segments = Self.weekSegments(start: startDate, totalDays: 30)
-            return segments.map { seg in totalsForRange(keys: Self.days(from: seg.start, to: seg.end).map(Self.key(for:))) }
+            var rows: [[String:Int]] = []
+            rows.reserveCapacity(segments.count)
+            for seg in segments {
+                let segDays = Self.days(from: seg.start, to: seg.end)
+                let segKeys = segDays.map { d in Self.key(for: d) }
+                rows.append(totalsForRange(keys: segKeys))
+            }
+            return rows
         case .custom:
-            let keys = Self.days(from: startDate, to: max(endDate, startDate)).map(Self.key(for:))
-            return keys.map { dayKey in totalsForDay(key: dayKey) }
+            let days = Self.days(from: startDate, to: max(endDate, startDate))
+            let keys = days.map { d in Self.key(for: d) }
+            var rows: [[String:Int]] = []
+            rows.reserveCapacity(keys.count)
+            for dayKey in keys {
+                rows.append(totalsForDay(key: dayKey))
+            }
+            return rows
         }
     }
 
@@ -791,8 +800,6 @@ fileprivate struct ColorSwatch: View {
 // MARK: - Preview
 struct GraphView_Previews: PreviewProvider {
     static var previews: some View {
-        let vm = DashboardViewModel(userId: "preview")
-        GraphView()
-            .environmentObject(vm)
+        GraphView(userId: "preview")
     }
 }
