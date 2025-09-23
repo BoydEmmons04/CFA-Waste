@@ -15,7 +15,8 @@ struct RootView: View {
         NavigationStack {
             if authViewModel.isAuthenticated {
                 if UIDevice.current.userInterfaceIdiom == .phone {
-                    DashboardView(userId: authViewModel.userId ?? "")
+                    GraphView()
+                        .environmentObject(GraphViewModel(userId: authViewModel.userId ?? ""))
                 } else {
                     HomeView()
                 }
