@@ -9,7 +9,7 @@ class ButtonGridViewModel: ObservableObject {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.timeZone = TimeZone(secondsFromGMT: 0)!
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
@@ -59,7 +59,7 @@ class ButtonGridViewModel: ObservableObject {
         // Track selection
         currentGroupId = groupId
         currentDateKey = key
-        if !Calendar.current.isDate(selectedDate, inSameDayAs: date) {
+        if !isSameUTCDay(selectedDate, date) {
             selectedDate = date
         }
 
@@ -75,12 +75,12 @@ class ButtonGridViewModel: ObservableObject {
 
             FirebaseService.shared.listenButtons(storeId: self.userId, groupId: groupId) { [weak self] result in
                 DispatchQueue.main.async {
+                    guard let self = self else { return }
                     switch result {
                     case .success(let items):
-                        self?.buttons = items
-                        self?.sortButtons()
+                        self.applySnapshot(items, for: self.selectedDate)
                     case .failure(let err):
-                        self?.errorMessage = "Buttons listen error: \(err.localizedDescription)"
+                        self.errorMessage = "Buttons listen error: \(err.localizedDescription)"
                     }
                 }
             }
@@ -104,7 +104,9 @@ class ButtonGridViewModel: ObservableObject {
         let snapshot = try await docRef.getDocument()
         let data = snapshot.data() ?? [:]
         let serverMap = data["tallies"] as? [String: Int] ?? [:]
-        let serverValue = serverMap[key] ?? 0
+        let serverNested = serverMap[key] ?? 0
+        let serverDirect = data["tallies.\(key)"] as? Int ?? 0
+        let serverValue = max(serverNested, serverDirect)
 
         if clamped < serverValue {
             // Authoritative DECREMENT: set exact lower value via transaction
@@ -133,7 +135,7 @@ class ButtonGridViewModel: ObservableObject {
     // MARK: - Increment Tally for a Specific Date
     func incrementTally(for button: ButtonObject, by amount: Int = 1, date: Date) async {
         // Only allow changes for today
-        guard Calendar.current.isDateInToday(date) else { return }
+        guard isUTCToday(date) else { return }
         guard let index = buttons.firstIndex(where: { $0.id == button.id }) else { return }
 
         let key = formatDate(date)
@@ -213,7 +215,7 @@ class ButtonGridViewModel: ObservableObject {
         do {
             let fetched = try await FirebaseService.shared.fetchButtonObjects(forUserId: userId, date: date)
 
-            if Calendar.current.isDateInToday(date) {
+            if isUTCToday(date) {
                 let key = formatDate(date)
                 let existing = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0.tallies[key] ?? 0) })
                 let pending = self.pendingSyncs // snapshot of pending queued increments
@@ -466,7 +468,7 @@ class ButtonGridViewModel: ObservableObject {
         }
 
         // 2) Load live or archived data
-        if Calendar.current.isDateInToday(newDate) {
+        if isUTCToday(newDate) {
             await fetchButtons(for: newDate)
         } else {
             var updatedButtons: [ButtonObject] = []
@@ -490,4 +492,49 @@ class ButtonGridViewModel: ObservableObject {
 
         previousDate = newDate
     }
+
+    // MARK: - UTC Date Helpers
+    private func isSameUTCDay(_ a: Date, _ b: Date) -> Bool {
+        return formatDate(a) == formatDate(b)
+    }
+
+    private func isUTCToday(_ d: Date) -> Bool {
+        return formatDate(d) == formatDate(Date())
+    }
+
+    /// Apply a live snapshot so that the in-memory state reflects the *selected* UTC day,
+    /// preserving pending increments for today and trusting server values for past days.
+    private func applySnapshot(_ snapshot: [ButtonObject], for date: Date) {
+        if isUTCToday(date) {
+            let key = formatDate(date)
+            let existing = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0.tallies[key] ?? 0) })
+            let pending = self.pendingSyncs
+
+            let merged: [ButtonObject] = snapshot.map { btn in
+                var b = btn
+                let local = existing[btn.id] ?? 0
+                let server = btn.tallies[key] ?? 0
+                let pendingKey = "\(btn.id)|\(key)"
+                if pending[pendingKey] != nil {
+                    b.tallies[key] = max(local, server)
+                } else {
+                    b.tallies[key] = server
+                }
+                return b
+            }
+            self.buttons = merged
+            self.sortButtons()
+        } else {
+            let key = formatDate(date)
+            let coerced: [ButtonObject] = snapshot.map { btn in
+                var b = btn
+                let onlyThisDay = b.tallies[key] ?? 0
+                b.tallies = [key: onlyThisDay]
+                return b
+            }
+            self.buttons = coerced
+            self.sortButtons()
+        }
+    }
 }
+
