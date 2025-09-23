@@ -26,7 +26,7 @@ class FirebaseService {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.timeZone = TimeZone(secondsFromGMT: 0)!
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
@@ -151,6 +151,59 @@ class FirebaseService {
         }
     }
 
+    // MARK: - Increment / Decrement Convenience APIs (UTC-safe)
+    /// Increment a button's tally by +1 (or a custom delta) for the provided date.
+    /// Uses FieldValue.increment for positive deltas; clamps at 0 for negative deltas.
+    func incrementTally(
+        buttonId: String,
+        forUserId userId: String,
+        by delta: Int = 1,
+        date: Date
+    ) async throws {
+        let buttonRef = db.collection("users")
+            .document(userId)
+            .collection("buttons")
+            .document(buttonId)
+        let formattedDate = formatDate(date)
+
+        if delta >= 0 {
+            try await buttonRef.updateData([
+                "tallies.\(formattedDate)": FieldValue.increment(Int64(delta)),
+                "timestamp": FieldValue.serverTimestamp()
+            ])
+        } else {
+            // Authoritative decrement with clamp >= 0
+            try await db.runTransaction { tx, errorPointer -> Any? in
+                do {
+                    let snap = try tx.getDocument(buttonRef)
+                    let data = snap.data() ?? [:]
+                    let nestedMap = data["tallies"] as? [String: Int] ?? [:]
+                    let nestedValue = nestedMap[formattedDate] ?? 0
+                    let directValue = data["tallies.\(formattedDate)"] as? Int ?? 0
+                    let current = max(nestedValue, directValue)
+                    let newValue = max(0, current + delta)
+                    tx.updateData([
+                        "tallies.\(formattedDate)": newValue,
+                        "timestamp": FieldValue.serverTimestamp()
+                    ], forDocument: buttonRef)
+                    return nil
+                } catch {
+                    errorPointer?.pointee = error as NSError
+                    return nil
+                }
+            }
+        }
+    }
+
+    /// Convenience wrappers for +/- 1
+    func incrementTallyByOne(buttonId: String, forUserId userId: String, date: Date) async throws {
+        try await incrementTally(buttonId: buttonId, forUserId: userId, by: 1, date: date)
+    }
+
+    func decrementTallyByOne(buttonId: String, forUserId userId: String, date: Date) async throws {
+        try await incrementTally(buttonId: buttonId, forUserId: userId, by: -1, date: date)
+    }
+
     // MARK: - Fetch Recent Tallies for Last `days` Days
     /// Returns a mapping of buttonId to its tallies within the last `days`.
     func fetchRecentArchives(
@@ -161,7 +214,9 @@ class FirebaseService {
         let buttonCollection = userRef.collection("buttons")
         let snapshot = try await buttonCollection.getDocuments()
         
-        let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
+        var utcCal = Calendar(identifier: .gregorian)
+        utcCal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let cutoffDate = utcCal.date(byAdding: .day, value: -days, to: Date())!
         let cutoffStr = formatDate(cutoffDate)
         
         var result: [String: [String: Int]] = [:]
@@ -206,7 +261,7 @@ class FirebaseService {
     // MARK: - Live Listeners: Buttons & Tallies
 
     /// Listen for buttons in a specific group, ordered by `order`.
-    /// Returns full ButtonObject models; tallies map is taken directly from the doc (no zeroing).
+    /// Returns full ButtonObject models; tallies map is merged from nested and dotted fields.
     func listenButtons(storeId: String,
                        groupId: String,
                        onChange: @escaping (Result<[ButtonObject], Error>) -> Void) {
@@ -228,8 +283,20 @@ class FirebaseService {
             var result: [ButtonObject] = []
             for doc in snapshot.documents {
                 let data = doc.data()
-                // Preserve any tallies present on the doc; do not overwrite with zeros.
-                let tallies = (data["tallies"] as? [String: Int]) ?? [:]
+                // Merge nested tallies map with any dotted fields like "tallies.2025-09-24"
+                let nestedTallies = (data["tallies"] as? [String: Int]) ?? [:]
+                var dottedTallies: [String: Int] = [:]
+                for (k, v) in data {
+                    if k.hasPrefix("tallies."), let intVal = v as? Int {
+                        let suffix = String(k.dropFirst("tallies.".count))
+                        dottedTallies[suffix] = intVal
+                    }
+                }
+                // Prefer the higher of the two shapes for each key
+                var mergedTallies = nestedTallies
+                for (k, v) in dottedTallies {
+                    mergedTallies[k] = max(mergedTallies[k] ?? 0, v)
+                }
 
                 let button = ButtonObject(
                     id: data["id"] as? String ?? doc.documentID,
@@ -237,7 +304,7 @@ class FirebaseService {
                     color: data["color"] as? String ?? "",
                     name: data["name"] as? String ?? "",
                     cost: data["cost"] as? Double ?? 0.0,
-                    tallies: tallies,
+                    tallies: mergedTallies,
                     group: (data["groupId"] as? String) ?? (data["group"] as? String) ?? "",
                     order: data["order"] as? Int ?? 0,
                     timestamp: ((data["timestamp"] as? Timestamp)?.dateValue()) ?? Date()
