@@ -2,11 +2,22 @@ import Foundation
 import Firebase
 import FirebaseFirestore
 
+struct GroupInfo: Identifiable, Hashable {
+    let id: String                   // Firestore doc ID
+    var title: String                // Display name
+    var icon: String?                // Optional SF Symbol name
+    var order: Int                   // Sort order for bottom bar
+    var isEnabled: Bool              // Whether the group is visible/enabled
+    var timestamp: Date?             // Last updated (optional)
+}
+
 class FirebaseService {
     // Singleton instance
     static let shared = FirebaseService()
     private let db = Firestore.firestore()
     private init() {}
+
+    private var groupsListener: ListenerRegistration?
 
     // MARK: - Date Formatter
     private static let dateFormatter: DateFormatter = {
@@ -181,6 +192,109 @@ class FirebaseService {
         try await userRef
             .collection("buttons")
             .document(buttonId)
+            .delete()
+    }
+
+    // MARK: - Groups (sibling to `buttons` under users/{userId})
+
+    /// Listen to groups for a store (user) and emit ordered results.
+    func listenGroups(forUserId userId: String,
+                      includeDisabled: Bool = true,
+                      onChange: @escaping (Result<[GroupInfo], Error>) -> Void) {
+        let groupsRef = db.collection("users").document(userId).collection("groups")
+        var query: Query = groupsRef.order(by: "order")
+        if !includeDisabled {
+            query = query.whereField("isEnabled", isEqualTo: true)
+        }
+
+        groupsListener?.remove()
+        groupsListener = query.addSnapshotListener { snapshot, error in
+            if let error = error {
+                onChange(.failure(error))
+                return
+            }
+            let docs = snapshot?.documents ?? []
+            let groups: [GroupInfo] = docs.map { doc in
+                let data = doc.data()
+                let ts = data["timestamp"] as? Timestamp
+                return GroupInfo(
+                    id: doc.documentID,
+                    title: data["title"] as? String ?? doc.documentID,
+                    icon: data["icon"] as? String,
+                    order: data["order"] as? Int ?? 0,
+                    isEnabled: data["isEnabled"] as? Bool ?? true,
+                    timestamp: ts?.dateValue()
+                )
+            }
+            onChange(.success(groups))
+        }
+    }
+
+    /// Stop listening to groups changes.
+    func stopGroups() {
+        groupsListener?.remove()
+        groupsListener = nil
+    }
+
+    /// One-shot fetch of all groups (ordered by `order`).
+    func fetchGroups(forUserId userId: String, includeDisabled: Bool = true) async throws -> [GroupInfo] {
+        let groupsRef = db.collection("users").document(userId).collection("groups")
+        var query: Query = groupsRef.order(by: "order")
+        if !includeDisabled {
+            query = query.whereField("isEnabled", isEqualTo: true)
+        }
+        let snapshot = try await query.getDocuments()
+        return snapshot.documents.map { doc in
+            let data = doc.data()
+            let ts = data["timestamp"] as? Timestamp
+            return GroupInfo(
+                id: doc.documentID,
+                title: data["title"] as? String ?? doc.documentID,
+                icon: data["icon"] as? String,
+                order: data["order"] as? Int ?? 0,
+                isEnabled: data["isEnabled"] as? Bool ?? true,
+                timestamp: ts?.dateValue()
+            )
+        }
+    }
+
+    /// Create or update a group document. Uses the provided `group.id` as the doc id.
+    func upsertGroup(_ group: GroupInfo, forUserId userId: String) async throws {
+        let ref = db.collection("users").document(userId).collection("groups").document(group.id)
+        var payload: [String: Any] = [
+            "title": group.title,
+            "order": group.order,
+            "isEnabled": group.isEnabled,
+            "timestamp": FieldValue.serverTimestamp()
+        ]
+        if let icon = group.icon { payload["icon"] = icon }
+        try await ref.setData(payload, merge: true)
+    }
+
+    /// Toggle enabled flag for a group.
+    func setGroupEnabled(forUserId userId: String, groupId: String, isEnabled: Bool) async throws {
+        let ref = db.collection("users").document(userId).collection("groups").document(groupId)
+        try await ref.updateData([
+            "isEnabled": isEnabled,
+            "timestamp": FieldValue.serverTimestamp()
+        ])
+    }
+
+    /// Reorder groups by writing sequential `order` values in a single batch.
+    func reorderGroups(forUserId userId: String, orderedIds: [String]) async throws {
+        let col = db.collection("users").document(userId).collection("groups")
+        let batch = db.batch()
+        for (idx, gid) in orderedIds.enumerated() {
+            batch.updateData(["order": idx], forDocument: col.document(gid))
+        }
+        try await batch.commit()
+    }
+
+    /// Delete a group document.
+    func deleteGroup(forUserId userId: String, groupId: String) async throws {
+        try await db.collection("users").document(userId)
+            .collection("groups")
+            .document(groupId)
             .delete()
     }
 }
