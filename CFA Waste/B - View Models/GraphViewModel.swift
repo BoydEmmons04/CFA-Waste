@@ -1,6 +1,8 @@
 import Foundation
 import Firebase
+import FirebaseFirestore
 import Combine
+
 
 struct GroupedWasteItem: Identifiable {
     let id = UUID()
@@ -8,7 +10,13 @@ struct GroupedWasteItem: Identifiable {
     let averageCostWasted: Double
 }
 
-class DashboardViewModel: ObservableObject {
+struct GroupRef: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let order: Int
+}
+
+class GraphViewModel: ObservableObject {
     @Published var buttonObjects: [ButtonObject] = []
     @Published var totalAmount: Double = 0.0
     @Published var weeklyTotal: Double = 0.0
@@ -19,6 +27,7 @@ class DashboardViewModel: ObservableObject {
     @Published var selectedDate: Date = Date()
     @Published var selectedButton: ButtonObject? = nil
     @Published var monthlyItemData: [(date: String, tally: Int)] = []
+    @Published var groups: [GroupRef] = []
     
     private lazy var monthDayFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -32,9 +41,18 @@ class DashboardViewModel: ObservableObject {
 
     private let userId: String
     private let db = Firestore.firestore()
+    private var groupsListener: ListenerRegistration?
 
     init(userId: String) {
         self.userId = userId
+
+        startGroupsListener()
+
+        $groups
+            .sink { [weak self] _ in
+                Task { await self?.loadGroupedWasteData() }
+            }
+            .store(in: &cancellables)
 
         // Recompute whenever the selected date changes
         $selectedDate
@@ -149,22 +167,30 @@ class DashboardViewModel: ObservableObject {
         do {
             let buttons = try await fetchButtonsWithTallies(userId: userId, dateKeys: keys)
             var newGroupedWasteData: [String: [GroupedWasteItem]] = [:]
-            let groups = ["FOH", "Shared Table", "Breakfast", "Lunch", "Raw", "Prep"]
 
-            for group in groups {
+            guard !groups.isEmpty else {
+                DispatchQueue.main.async { self.groupedWasteData = [:] }
+                return
+            }
+
+            for group in groups.sorted(by: { lhs, rhs in
+                lhs.order == rhs.order
+                    ? (lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending)
+                    : (lhs.order < rhs.order)
+            }) {
                 var groupItems: [GroupedWasteItem] = []
-                for button in buttons.filter({ $0.group == group }) {
+                for button in buttons.filter({ $0.group == group.id || $0.group == group.name }) {
                     let totalWasteCost = keys.reduce(0.0) { subtotal, k in
                         subtotal + (Double(button.tallies[k] ?? 0) * button.cost)
                     }
                     let averageWasteCost = keys.isEmpty ? 0 : (totalWasteCost / Double(keys.count))
                     groupItems.append(GroupedWasteItem(name: button.name, averageCostWasted: averageWasteCost))
                 }
-                newGroupedWasteData[group] = groupItems
+                newGroupedWasteData[group.name] = groupItems
             }
             DispatchQueue.main.async {
                 self.groupedWasteData = newGroupedWasteData
-                print("📊 Grouped Waste Data: \(self.groupedWasteData)")
+                print("📊 Grouped Waste Data (dynamic): \(self.groupedWasteData)")
             }
         } catch {
             print("❌ Error fetching grouped waste data: \(error)")
@@ -538,6 +564,10 @@ class DashboardViewModel: ObservableObject {
             DispatchQueue.main.async { self.monthlyItemData = [] }
         }
     }
+    deinit {
+        groupsListener?.remove()
+        groupsListener = nil
+    }
 }
 
 // MARK: - Small ISO Helper
@@ -550,3 +580,34 @@ private extension ISO8601DateFormatter {
         return f
     }()
 }
+
+// MARK: - Dynamic Groups Listener
+private extension GraphViewModel {
+    func startGroupsListener() {
+        groupsListener?.remove()
+
+        let userDoc = db.collection("users").document(userId)
+        groupsListener = userDoc
+            .collection("groups")
+            .order(by: "order", descending: false)
+            .addSnapshotListener { [weak self] snapshot, error in
+                guard let self = self else { return }
+                if let error = error {
+                    print("❌ Groups listen error: \(error.localizedDescription)")
+                    return
+                }
+                guard let docs = snapshot?.documents else { return }
+                let mapped: [GroupRef] = docs.map { doc in
+                    let data = doc.data()
+                    let name = (data["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? doc.documentID
+                    let order = data["order"] as? Int ?? 0
+                    return GroupRef(id: doc.documentID, name: name, order: order)
+                }
+                self.groups = mapped.sorted { (a, b) in
+                    if a.order == b.order { return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending }
+                    return a.order < b.order
+                }
+            }
+    }
+}
+
