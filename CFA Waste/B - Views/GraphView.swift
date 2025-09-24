@@ -13,6 +13,7 @@ fileprivate enum ReportScope: String, CaseIterable, Identifiable {
 
 struct GraphView: View {
     @StateObject private var viewModel: GraphViewModel
+    @Environment(\.dismiss) private var dismiss
 
     init(userId: String? = nil) {
         let uid = userId ?? Auth.auth().currentUser?.uid ?? "UnknownUser"
@@ -33,11 +34,10 @@ struct GraphView: View {
     @State private var hydratedItems: [ButtonObject] = []
     @State private var isHydrating: Bool = false
     @State private var perItemTotals: [String: (Int, Double)] = [:]
-    @State private var isDetailLoading: Bool = false
-
-    // Detail presentation
+    // Banner animation state
+    @State private var bannerPulse: Bool = false
+    // Detail presentation (use item identity for the sheet)
     @State private var detailItem: ButtonObject? = nil
-    @State private var isShowingDetail: Bool = false
 
     // MARK: - Report scope & dates
     @State private var scope: ReportScope = .daily
@@ -49,7 +49,8 @@ struct GraphView: View {
     private let allGroupToken = "__ALL__"
 
     var body: some View {
-        Group {
+        VStack(spacing: 8) {
+            todayBanner
             if isPad {
                 ipadBody
             } else {
@@ -57,12 +58,31 @@ struct GraphView: View {
             }
         }
         .padding(.top, 8)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button(action: { dismiss() }) {
+                    Image(systemName: "chevron.left")
+                        .font(.headline)
+                        .imageScale(.medium)
+                }
+            }
+        }
         .onAppear {
             if let s = ReportScope(rawValue: storedScopeRaw) { scope = s }
             if let d = Self.dateFromKey(storedStartKey) { startDate = d }
             if let e = Self.dateFromKey(storedEndKey) { endDate = e }
             selectedGroup = storedGroup
             Task { await hydrateData() }
+            // Subtle initial pulse
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                bannerPulse.toggle()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    bannerPulse.toggle()
+                }
+            }
         }
         .onChange(of: scope) { newScope in
             storedScopeRaw = newScope.rawValue
@@ -80,16 +100,13 @@ struct GraphView: View {
             storedGroup = newValue
             Task { await hydrateData() }
         }
-        .sheet(isPresented: $isShowingDetail) {
-            if let item = detailItem {
-                DetailBreakdownView(
-                    item: item,
-                    rows: rows,
-                    rowData: rowData,
-                    scope: scope,
-                    isLoading: $isDetailLoading
-                )
-            }
+        .sheet(item: $detailItem) { item in
+            DetailBreakdownView(
+                item: item,
+                rows: rows,
+                rowData: rowData,
+                scope: scope
+            )
         }
     }
 
@@ -215,8 +232,6 @@ private extension GraphView {
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     detailItem = item
-                                    isDetailLoading = true
-                                    isShowingDetail = true
                                 }
                             }
                         }
@@ -378,8 +393,6 @@ private extension GraphView {
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     detailItem = item
-                                    isDetailLoading = true
-                                    isShowingDetail = true
                                 }
                             }
                         }
@@ -408,60 +421,38 @@ fileprivate struct DetailBreakdownView: View {
     let rows: [String]
     let rowData: [[String:Int]]
     let scope: ReportScope
-    @Binding var isLoading: Bool
 
     var body: some View {
         NavigationView {
-            ZStack {
-                List {
-                    Section {
-                        HStack(spacing: 10) {
-                            ColorSwatch(hex: item.color)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name)
-                                    .font(.headline)
-                                Text("$\(item.cost, specifier: "%.2f") per unit")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
+            List {
+                Section {
+                    HStack(spacing: 10) {
+                        ColorSwatch(hex: item.color)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name)
+                                .font(.headline)
+                            Text("$\(item.cost, specifier: "%.2f") per unit")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
+                        Spacer()
                     }
+                }
 
-                    Section(header: Text(scope == .monthly ? "Weekly Breakdown" : "Daily Breakdown")) {
-                        ForEach(rows.indices, id: \.self) { idx in
-                            let label = rows[idx]
-                            let r = rowData[idx]
-                            let tally = r[item.id] ?? 0
-                            let price = Double(tally) * item.cost
-                            HStack {
-                                Text(label)
-                                Spacer()
-                                HStack(spacing: 8) {
-                                    Text("\(tally)")
-                                        .font(.headline)
-                                        .monospacedDigit()
-                                    Text("$\(price, specifier: "%.2f")")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                        .monospacedDigit()
-                                }
-                            }
-                        }
-                    }
-
-                    // Totals footer
-                    Section {
-                        let totalTally = rowData.reduce(0) { $0 + ($1[item.id] ?? 0) }
-                        let totalCost  = Double(totalTally) * item.cost
+                Section(header: Text(scope == .monthly ? "Weekly Breakdown" : "Daily Breakdown")) {
+                    ForEach(rows.indices, id: \.self) { idx in
+                        let label = rows[idx]
+                        let r = rowData[idx]
+                        let tally = r[item.id] ?? 0
+                        let price = Double(tally) * item.cost
                         HStack {
-                            Text("Total")
+                            Text(label)
                             Spacer()
                             HStack(spacing: 8) {
-                                Text("\(totalTally)")
+                                Text("\(tally)")
                                     .font(.headline)
                                     .monospacedDigit()
-                                Text("$\(totalCost, specifier: "%.2f")")
+                                Text("$\(price, specifier: "%.2f")")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                                     .monospacedDigit()
@@ -470,9 +461,23 @@ fileprivate struct DetailBreakdownView: View {
                     }
                 }
 
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(1.2)
+                // Totals footer
+                Section {
+                    let totalTally = rowData.reduce(0) { $0 + ($1[item.id] ?? 0) }
+                    let totalCost  = Double(totalTally) * item.cost
+                    HStack {
+                        Text("Total")
+                        Spacer()
+                        HStack(spacing: 8) {
+                            Text("\(totalTally)")
+                                .font(.headline)
+                                .monospacedDigit()
+                            Text("$\(totalCost, specifier: "%.2f")")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
                 }
             }
             .navigationTitle("Details")
@@ -480,10 +485,6 @@ fileprivate struct DetailBreakdownView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-            }
-            .task {
-                // Mark loading complete when the view appears
-                if isLoading { isLoading = false }
             }
         }
     }
@@ -516,6 +517,44 @@ private extension GraphView {
         return true
         #endif
     }
+
+    // Always-on today total (UTC)
+    private var todayKey: String { Self.key(for: Date()) }
+    private var todayTotalDollars: Double {
+        let items = viewModel.buttonObjects
+        let sum = items.reduce(0.0) { partial, item in
+            let tally = tallyValue(for: item, dateKey: todayKey)
+            return partial + (Double(tally) * item.cost)
+        }
+        return sum
+    }
+
+    private var todayBanner: some View {
+        VStack(spacing: 4) {
+            Text("Today's Total")
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text("$\(todayTotalDollars, specifier: "%.2f")")
+                .font(.title.weight(.bold))
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.gray.opacity(0.09))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+        )
+        .padding(.horizontal)
+        .scaleEffect(bannerPulse ? 1.045 : 1.0)
+        .opacity(bannerPulse ? 1.0 : 0.98)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: bannerPulse)
+    }
     var groupKeys: [String] {
         if !viewModel.groups.isEmpty {
             let orderedIds = viewModel.groups
@@ -538,9 +577,22 @@ private extension GraphView {
         return key.isEmpty ? "(No Group)" : key
     }
 
+    /// Resolve a group's name for a given id, if known from the ViewModel's groups list
+    private func groupName(for id: String) -> String? {
+        return viewModel.groups.first(where: { $0.id == id })?.name
+    }
+
     var itemsInSelectedGroup: [ButtonObject] {
-        if selectedGroup == allGroupToken { return items.sorted { ($0.group, $0.name) < ($1.group, $1.name) } }
-        return (groupedItems[selectedGroup] ?? []).sorted { $0.name < $1.name }
+        if selectedGroup == allGroupToken {
+            return items.sorted { ($0.group, $0.name) < ($1.group, $1.name) }
+        }
+        let maybeName = groupName(for: selectedGroup)
+        return items
+            .filter { btn in
+                // Match by id (new) OR by name (legacy)
+                btn.group == selectedGroup || (maybeName != nil && btn.group == maybeName)
+            }
+            .sorted { $0.name < $1.name }
     }
 
     // Build the list of date keys needed for the current scope, moving FORWARD from startDate
@@ -601,7 +653,15 @@ private extension GraphView {
     }
 
     var selectedItems: [ButtonObject] {
-        hydratedItems.sorted { ($0.group, $0.name) < ($1.group, $1.name) }
+        if selectedGroup == allGroupToken {
+            return hydratedItems.sorted { ($0.group, $0.name) < ($1.group, $1.name) }
+        }
+        let maybeName = groupName(for: selectedGroup)
+        return hydratedItems
+            .filter { btn in
+                btn.group == selectedGroup || (maybeName != nil && btn.group == maybeName)
+            }
+            .sorted { $0.name < $1.name }
     }
 
     var rows: [String] {
@@ -795,6 +855,7 @@ fileprivate struct ColorSwatch: View {
         return Color(hexOrName)
     }
 }
+
 
 
 // MARK: - Preview
