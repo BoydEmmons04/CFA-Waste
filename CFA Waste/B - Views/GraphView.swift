@@ -38,6 +38,7 @@ struct GraphView: View {
     @State private var bannerPulse: Bool = false
     // Detail presentation (use item identity for the sheet)
     @State private var detailItem: ButtonObject? = nil
+    @State private var showSignOutConfirm: Bool = false
 
     // MARK: - Report scope & dates
     @State private var scope: ReportScope = .daily
@@ -61,12 +62,27 @@ struct GraphView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: { dismiss() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.headline)
-                        .imageScale(.medium)
+                if isPad {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "chevron.left")
+                            .font(.headline)
+                            .imageScale(.medium)
+                    }
+                } else {
+                    Button(action: { showSignOutConfirm = true }) {
+                        Text("Sign Out")
+                            .font(.headline)
+                            .foregroundColor(.red)
+                    }
+                    .tint(.red)
                 }
             }
+        }
+        .alert("Sign out?", isPresented: $showSignOutConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Sign Out", role: .destructive) { signOut() }
+        } message: {
+            Text("You'll need to log in again to continue.")
         }
         .onAppear {
             if let s = ReportScope(rawValue: storedScopeRaw) { scope = s }
@@ -510,6 +526,15 @@ fileprivate struct DetailBreakdownView: View {
 
 // MARK: - Data & Helpers
 private extension GraphView {
+    private func signOut() {
+        do {
+            try Auth.auth().signOut()
+        } catch {
+            print("❌ Sign out failed: \(error.localizedDescription)")
+        }
+        dismiss()
+    }
+
     var isPad: Bool {
         #if os(iOS)
         return UIDevice.current.userInterfaceIdiom == .pad
@@ -583,18 +608,21 @@ private extension GraphView {
     }
 
     var itemsInSelectedGroup: [ButtonObject] {
+        let base: [ButtonObject]
         if selectedGroup == allGroupToken {
-            return items.sorted { ($0.group, $0.name) < ($1.group, $1.name) }
-        }
-        let maybeName = groupName(for: selectedGroup)
-        return items
-            .filter { btn in
+            base = items
+        } else {
+            let maybeName = groupName(for: selectedGroup)
+            base = items.filter { btn in
                 // Match by id (new) OR by name (legacy)
                 btn.group == selectedGroup || (maybeName != nil && btn.group == maybeName)
             }
-            .sorted { $0.name < $1.name }
+        }
+        return base.sorted { lhs, rhs in
+            if lhs.order == rhs.order { return lhs.name < rhs.name }
+            return lhs.order < rhs.order
+        }
     }
-
     // Build the list of date keys needed for the current scope, moving FORWARD from startDate
     func currentDateKeys() -> [String] {
         switch scope {
@@ -649,19 +677,28 @@ private extension GraphView {
 
     var groupedItems: [String: [ButtonObject]] {
         Dictionary(grouping: items) { $0.group }
-            .mapValues { $0.sorted { $0.name < $1.name } }
+            .mapValues { list in
+                list.sorted { lhs, rhs in
+                    if lhs.order == rhs.order { return lhs.name < rhs.name }
+                    return lhs.order < rhs.order
+                }
+            }
     }
 
     var selectedItems: [ButtonObject] {
+        let base: [ButtonObject]
         if selectedGroup == allGroupToken {
-            return hydratedItems.sorted { ($0.group, $0.name) < ($1.group, $1.name) }
-        }
-        let maybeName = groupName(for: selectedGroup)
-        return hydratedItems
-            .filter { btn in
+            base = hydratedItems
+        } else {
+            let maybeName = groupName(for: selectedGroup)
+            base = hydratedItems.filter { btn in
                 btn.group == selectedGroup || (maybeName != nil && btn.group == maybeName)
             }
-            .sorted { $0.name < $1.name }
+        }
+        return base.sorted { lhs, rhs in
+            if lhs.order == rhs.order { return lhs.name < rhs.name }
+            return lhs.order < rhs.order
+        }
     }
 
     var rows: [String] {
