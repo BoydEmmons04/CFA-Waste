@@ -16,6 +16,8 @@ struct GroupRef: Identifiable, Equatable {
     let order: Int
 }
 
+private let centralTZ = TimeZone(identifier: "America/Chicago")!
+
 class GraphViewModel: ObservableObject {
     @Published var buttonObjects: [ButtonObject] = []
     @Published var totalAmount: Double = 0.0
@@ -33,7 +35,7 @@ class GraphViewModel: ObservableObject {
         let f = DateFormatter()
         f.dateFormat = "MM/dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
+        f.timeZone = centralTZ
         return f
     }()
     
@@ -307,11 +309,12 @@ class GraphViewModel: ObservableObject {
     // MARK: - Timeframe Helpers (Keys)
     /// Keys FORWARD from a start date (inclusive). E.g., Monthly = 30 days from start.
     private func nextNDaysKeys(startingFrom start: Date, count: Int) -> [String] {
-        let cal = Calendar.current
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = centralTZ // Central Time day boundary
         let start = cal.startOfDay(for: start)
         var arr: [String] = []
         arr.reserveCapacity(count)
-        for i in 0..<count { // start, start+1, ..., start+count-1
+        for i in 0..<count {
             if let d = cal.date(byAdding: .day, value: i, to: start) {
                 arr.append(formatDate(d))
             }
@@ -321,7 +324,8 @@ class GraphViewModel: ObservableObject {
 
     /// Inclusive keys between start and end, moving forward by 1 day
     private func keysBetween(start: Date, end: Date) -> [String] {
-        let cal = Calendar.current
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = centralTZ // Central Time day boundary
         let s = cal.startOfDay(for: min(start, end))
         let e = cal.startOfDay(for: max(start, end))
         var res: [String] = []
@@ -520,22 +524,29 @@ class GraphViewModel: ObservableObject {
         }
     }
 
+    /// Returns the date-key for the device's local "today" (regardless of time of day)
+    var deviceLocalTodayKey: String { formatDate(Date()) }
+
     // MARK: - Date Helpers
     func formatDate(_ date: Date) -> String {
-        let start = Calendar.current.startOfDay(for: date)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = centralTZ                  // Central Time day boundary
+        let start = cal.startOfDay(for: date)
+
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
+        formatter.timeZone = centralTZ            // Central Time
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: start)
     }
 
     private func lastNDaysKeys(startingFrom anchor: Date, count: Int) -> [String] {
-        let cal = Calendar.current
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = centralTZ
         let start = cal.startOfDay(for: anchor)
         var arr: [String] = []
         arr.reserveCapacity(count)
-        for i in stride(from: count - 1, through: 0, by: -1) { // chronological: oldest -> newest
+        for i in stride(from: count - 1, through: 0, by: -1) {
             if let d = cal.date(byAdding: .day, value: -i, to: start) {
                 arr.append(formatDate(d))
             }
@@ -575,12 +586,11 @@ private extension ISO8601DateFormatter {
     static let yyyyMMdd: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
+        f.timeZone = centralTZ   // Central Time
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
 }
-
 // MARK: - Dynamic Groups Listener
 private extension GraphViewModel {
     func startGroupsListener() {
@@ -610,4 +620,5 @@ private extension GraphViewModel {
             }
     }
 }
+
 

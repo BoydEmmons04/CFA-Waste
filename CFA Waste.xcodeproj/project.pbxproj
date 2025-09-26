@@ -35,22 +35,9 @@
 		45E5D36B2CA0FFB500BB712E /* CFA WasteUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "CFA WasteUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		45E7C0222E835F0E00BA3A47 /* Exceptions for "CFA Waste" folder in "CFA Waste" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				"CFA-Waste-Info.plist",
-			);
-			target = 45E5D34F2CA0FFB200BB712E /* CFA Waste */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		45E5D3522CA0FFB200BB712E /* CFA Waste */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				45E7C0222E835F0E00BA3A47 /* Exceptions for "CFA Waste" folder in "CFA Waste" target */,
-			);
 			path = "CFA Waste";
 			sourceTree = "<group>";
 		};
@@ -419,7 +406,7 @@
 				CODE_SIGN_ENTITLEMENTS = "CFA Waste/CFA_Waste.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"CFA Waste/Preview Content\"";
 				DEVELOPMENT_TEAM = PZ8PWFLH48;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -467,7 +454,7 @@
 				CODE_SIGN_ENTITLEMENTS = "CFA Waste/CFA_Waste.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"CFA Waste/Preview Content\"";
 				DEVELOPMENT_TEAM = PZ8PWFLH48;
 				ENABLE_HARDENED_RUNTIME = YES;

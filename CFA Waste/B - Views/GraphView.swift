@@ -543,8 +543,20 @@ private extension GraphView {
         #endif
     }
 
-    // Always-on today total (UTC)
-    private var todayKey: String { Self.key(for: Date()) }
+    // Always-on today total (LOCAL device day, ignores timezone offsets)
+    private static func localKey(for date: Date) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone.current
+        let start = cal.startOfDay(for: date)
+        let df = DateFormatter()
+        df.calendar = cal
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone.current
+        df.dateFormat = "yyyy-MM-dd"
+        return df.string(from: start)
+    }
+
+    private var todayKey: String { Self.localKey(for: Date()) }
     private var todayTotalDollars: Double {
         let items = viewModel.buttonObjects
         let sum = items.reduce(0.0) { partial, item in
