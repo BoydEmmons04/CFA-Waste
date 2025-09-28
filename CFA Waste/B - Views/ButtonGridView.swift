@@ -1,13 +1,5 @@
 import SwiftUI
 
-private func isUTCToday(_ d: Date) -> Bool {
-    var cal = Calendar(identifier: .gregorian)
-    cal.timeZone = TimeZone(secondsFromGMT: 0)!
-    let start = cal.startOfDay(for: d)
-    let todayStart = cal.startOfDay(for: Date())
-    return start == todayStart
-}
-
 struct ButtonGridView: View {
     @ObservedObject var viewModel: ButtonGridViewModel
     let group: String
@@ -58,7 +50,7 @@ struct ButtonGridView: View {
                                         ButtonView(button: button, selectedDate: selectedDate) { pressedButton, date in
                                             handleButtonPress(pressedButton, date: date)
                                         }
-                                        .disabled(!isUTCToday(selectedDate))
+                                        .disabled(!DateAuthority.isDeviceToday(selectedDate))
                                         // Attach gestures: drag has higher priority than long press.
                                         .highPriorityGesture(createDragGesture(for: button))
                                         .gesture(createLongPressGesture(for: button))
@@ -72,7 +64,7 @@ struct ButtonGridView: View {
                 }
                 
                 // Lock overlay when viewing a past date — with shake + hint to use Date Picker
-                if !isUTCToday(selectedDate) && !showRadialView {
+                if !DateAuthority.isDeviceToday(selectedDate) && !showRadialView {
                     Color.black.opacity(0.35)
                         .ignoresSafeArea()
 
@@ -184,7 +176,7 @@ struct ButtonGridView: View {
     
     // MARK: - Handle Button Press
     private func handleButtonPress(_ button: ButtonObject, date: Date) {
-        guard isUTCToday(date) else { return }
+        guard DateAuthority.isDeviceToday(date) else { return }
         guard !showRadialView, !isIncrementing else {
             print("Button press ignored while radial view is active or incrementing")
             return
@@ -212,7 +204,7 @@ struct ButtonGridView: View {
     
     // MARK: - Handle Long Press
     private func handleLongPress(_ button: ButtonObject) {
-        guard isUTCToday(selectedDate) else { return }
+        guard DateAuthority.isDeviceToday(selectedDate) else { return }
         print("Long press detected on button: \(button.name)")
         isLongPressActive = true
         selectedButton = button
@@ -236,7 +228,7 @@ struct ButtonGridView: View {
         DragGesture(minimumDistance: 20, coordinateSpace: .local)
             .onEnded { value in
                 guard value.translation.height > 20,
-                      isUTCToday(selectedDate) else { return }
+                      DateAuthority.isDeviceToday(selectedDate) else { return }
                 Task {
                     await incrementTally(button, by: -1, date: selectedDate)
                 }

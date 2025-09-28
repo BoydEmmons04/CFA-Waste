@@ -16,7 +16,6 @@ struct GroupRef: Identifiable, Equatable {
     let order: Int
 }
 
-private let centralTZ = TimeZone(identifier: "America/Chicago")!
 
 class GraphViewModel: ObservableObject {
     @Published var buttonObjects: [ButtonObject] = []
@@ -35,7 +34,7 @@ class GraphViewModel: ObservableObject {
         let f = DateFormatter()
         f.dateFormat = "MM/dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = centralTZ
+        f.timeZone = .current
         return f
     }()
     
@@ -310,7 +309,7 @@ class GraphViewModel: ObservableObject {
     /// Keys FORWARD from a start date (inclusive). E.g., Monthly = 30 days from start.
     private func nextNDaysKeys(startingFrom start: Date, count: Int) -> [String] {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = centralTZ // Central Time day boundary
+        cal.timeZone = .current // Device local day boundary
         let start = cal.startOfDay(for: start)
         var arr: [String] = []
         arr.reserveCapacity(count)
@@ -325,7 +324,7 @@ class GraphViewModel: ObservableObject {
     /// Inclusive keys between start and end, moving forward by 1 day
     private func keysBetween(start: Date, end: Date) -> [String] {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = centralTZ // Central Time day boundary
+        cal.timeZone = .current // Device local day boundary
         let s = cal.startOfDay(for: min(start, end))
         let e = cal.startOfDay(for: max(start, end))
         var res: [String] = []
@@ -525,24 +524,16 @@ class GraphViewModel: ObservableObject {
     }
 
     /// Returns the date-key for the device's local "today" (regardless of time of day)
-    var deviceLocalTodayKey: String { formatDate(Date()) }
+    var deviceLocalTodayKey: String { DateAuthority.todayKey }
 
     // MARK: - Date Helpers
     func formatDate(_ date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = centralTZ                  // Central Time day boundary
-        let start = cal.startOfDay(for: date)
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = centralTZ            // Central Time
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: start)
+        DateAuthority.deviceDayKey(for: date)
     }
 
     private func lastNDaysKeys(startingFrom anchor: Date, count: Int) -> [String] {
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = centralTZ
+        cal.timeZone = .current
         let start = cal.startOfDay(for: anchor)
         var arr: [String] = []
         arr.reserveCapacity(count)
@@ -586,7 +577,7 @@ private extension ISO8601DateFormatter {
     static let yyyyMMdd: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = centralTZ   // Central Time
+        f.timeZone = .current
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()

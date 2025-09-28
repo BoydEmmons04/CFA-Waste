@@ -143,25 +143,8 @@ struct ButtonView: View {
 
     // MARK: - Get Tally for a Specific Date
     private func getTally(for date: Date) -> Int {
-        let formattedDate = formatDate(date)
-        return button.tallies[formattedDate] ?? 0 // Retrieve tally for selected date
-    }
-
-    // MARK: - Date Formatting (UTC, stable across devices)
-    private static let utcFormatter: DateFormatter = {
-        let df = DateFormatter()
-        df.calendar = Calendar(identifier: .gregorian)
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone(secondsFromGMT: 0)
-        df.dateFormat = "yyyy-MM-dd"
-        return df
-    }()
-
-    private func formatDate(_ date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let start = cal.startOfDay(for: date)
-        return Self.utcFormatter.string(from: start)
+        let key = DateAuthority.deviceDayKey(for: date)
+        return button.tallies[key] ?? 0
     }
 }
 

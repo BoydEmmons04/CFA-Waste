@@ -5,14 +5,6 @@ import FirebaseFirestore
 
 @MainActor
 class ButtonGridViewModel: ObservableObject {
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = Calendar(identifier: .gregorian)
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(secondsFromGMT: 0)!
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
     
     @Published var buttons: [ButtonObject] = []
     @Published var isLoading: Bool = false
@@ -53,13 +45,13 @@ class ButtonGridViewModel: ObservableObject {
     /// Bind the grid to a selected group & date. Call from the view onAppear and when either value changes.
     /// This keeps network work minimal by only fetching when the group or day key changes, or if we have no data.
     func bind(groupId: String, date: Date) {
-        let key = formatDate(date)
+        let key = DateAuthority.deviceDayKey(for: date)
         let changed = buttons.isEmpty || groupId != currentGroupId || key != currentDateKey
 
         // Track selection
         currentGroupId = groupId
         currentDateKey = key
-        if !isSameUTCDay(selectedDate, date) {
+        if DateAuthority.deviceDayKey(for: selectedDate) != key {
             selectedDate = date
         }
 
@@ -91,7 +83,7 @@ class ButtonGridViewModel: ObservableObject {
     func updateTallyInFirestore(for button: ButtonObject, tally: Int, date: Date) async throws {
         guard let index = buttons.firstIndex(where: { $0.id == button.id }) else { return }
 
-        let key = formatDate(date)
+        let key = DateAuthority.deviceDayKey(for: date)
         let clamped = max(0, tally)
 
         let docRef = db
@@ -135,10 +127,10 @@ class ButtonGridViewModel: ObservableObject {
     // MARK: - Increment Tally for a Specific Date
     func incrementTally(for button: ButtonObject, by amount: Int = 1, date: Date) async {
         // Only allow changes for today
-        guard isUTCToday(date) else { return }
+        guard DateAuthority.isDeviceToday(date) else { return }
         guard let index = buttons.firstIndex(where: { $0.id == button.id }) else { return }
 
-        let key = formatDate(date)
+        let key = DateAuthority.deviceDayKey(for: date)
         let current = buttons[index].tallies[key] ?? 0
         let nextUnclamped = current + amount
         let next = max(0, nextUnclamped) // never negative
@@ -215,8 +207,8 @@ class ButtonGridViewModel: ObservableObject {
         do {
             let fetched = try await FirebaseService.shared.fetchButtonObjects(forUserId: userId, date: date)
 
-            if isUTCToday(date) {
-                let key = formatDate(date)
+            if DateAuthority.isDeviceToday(date) {
+                let key = DateAuthority.deviceDayKey(for: date)
                 let existing = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0.tallies[key] ?? 0) })
                 let pending = self.pendingSyncs // snapshot of pending queued increments
 
@@ -407,8 +399,8 @@ class ButtonGridViewModel: ObservableObject {
                 try await self.updateTallyInFirestore(for: button, tally: 0, date: date)
             }
 
-            // Update local state
-            self.buttons = allButtons.map { var b = $0; b.tallies[self.formatDate(date)] = 0; return b }
+            let key = DateAuthority.deviceDayKey(for: date)
+            self.buttons = allButtons.map { var b = $0; b.tallies[key] = 0; return b }
         } catch {
             self.errorMessage = "Failed to reset tallies: \(error.localizedDescription)"
         }
@@ -429,13 +421,6 @@ class ButtonGridViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Date Formatting
-    func formatDate(_ date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let day = cal.startOfDay(for: date)
-        return Self.dateFormatter.string(from: day)
-    }
 
     /// Archive the previous day’s tallies and then load the appropriate data for newDate
     private func handleDateChange(_ newDate: Date) async {
@@ -449,14 +434,14 @@ class ButtonGridViewModel: ObservableObject {
 
         let userDoc = db.collection("users").document(userId)
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        cal.timeZone = .current
         let newDay = cal.startOfDay(for: newDate)
-        let newKey = Self.dateFormatter.string(from: newDay)
+        let newKey = DateAuthority.deviceDayKey(for: newDay)
 
         // 1) Archive if moving forward
         if newDate > previousDate, didHydrateToday {
             let oldDay = cal.startOfDay(for: previousDate)
-            let oldKey = Self.dateFormatter.string(from: oldDay)
+            let oldKey = DateAuthority.deviceDayKey(for: oldDay)
             for button in buttons {
                 let oldCount = button.tallies[oldKey] ?? 0
                 let buttonDoc = userDoc.collection("buttons").document(button.id)
@@ -468,7 +453,7 @@ class ButtonGridViewModel: ObservableObject {
         }
 
         // 2) Load live or archived data
-        if isUTCToday(newDate) {
+        if DateAuthority.isDeviceToday(newDate) {
             await fetchButtons(for: newDate)
         } else {
             var updatedButtons: [ButtonObject] = []
@@ -493,20 +478,11 @@ class ButtonGridViewModel: ObservableObject {
         previousDate = newDate
     }
 
-    // MARK: - UTC Date Helpers
-    private func isSameUTCDay(_ a: Date, _ b: Date) -> Bool {
-        return formatDate(a) == formatDate(b)
-    }
-
-    private func isUTCToday(_ d: Date) -> Bool {
-        return formatDate(d) == formatDate(Date())
-    }
-
-    /// Apply a live snapshot so that the in-memory state reflects the *selected* UTC day,
+    /// Apply a live snapshot so that the in-memory state reflects the *selected* local day,
     /// preserving pending increments for today and trusting server values for past days.
     private func applySnapshot(_ snapshot: [ButtonObject], for date: Date) {
-        if isUTCToday(date) {
-            let key = formatDate(date)
+        if DateAuthority.isDeviceToday(date) {
+            let key = DateAuthority.deviceDayKey(for: date)
             let existing = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0.tallies[key] ?? 0) })
             let pending = self.pendingSyncs
 
@@ -525,7 +501,7 @@ class ButtonGridViewModel: ObservableObject {
             self.buttons = merged
             self.sortButtons()
         } else {
-            let key = formatDate(date)
+            let key = DateAuthority.deviceDayKey(for: date)
             let coerced: [ButtonObject] = snapshot.map { btn in
                 var b = btn
                 let onlyThisDay = b.tallies[key] ?? 0

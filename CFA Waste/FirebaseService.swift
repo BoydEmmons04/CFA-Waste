@@ -21,26 +21,6 @@ class FirebaseService {
     private var buttonsListener: ListenerRegistration?
     private var talliesListener: ListenerRegistration?
 
-    // MARK: - Date Formatter
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = Calendar(identifier: .gregorian)
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(secondsFromGMT: 0)!
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    private func formatDate(_ date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let start = cal.startOfDay(for: date)
-        return FirebaseService.dateFormatter.string(from: start)
-    }
-
-    private func isToday(_ date: Date) -> Bool {
-        return formatDate(date) == formatDate(Date())
-    }
 
     // MARK: - Fetch ButtonObjects for a Specific Date
     /// Retrieves buttons and ensures today's tally is initialized.
@@ -49,7 +29,7 @@ class FirebaseService {
         let buttonCollection = userRef.collection("buttons")
         let snapshot = try await buttonCollection.order(by: "order").getDocuments()
 
-        let selectedDate = formatDate(date)
+        let selectedDate = DateAuthority.deviceDayKey(for: date)
         var buttonObjects: [ButtonObject] = []
 
         for document in snapshot.documents {
@@ -85,7 +65,7 @@ class FirebaseService {
     func addButton(_ button: ButtonObject, forUserId userId: String) async throws {
         let userRef = db.collection("users").document(userId)
         let buttonRef = userRef.collection("buttons").document(button.id)
-        let today = formatDate(Date())
+        let today = DateAuthority.deviceDayKey(for: Date())
 
         try await buttonRef.setData([
             "id": button.id,
@@ -111,7 +91,7 @@ class FirebaseService {
             .document(userId)
             .collection("buttons")
             .document(buttonId)
-        let formattedDate = formatDate(date)
+        let formattedDate = DateAuthority.deviceDayKey(for: date)
 
         // Fetch current server tally for this date
         let snapshot = try await buttonRef.getDocument()
@@ -164,7 +144,7 @@ class FirebaseService {
             .document(userId)
             .collection("buttons")
             .document(buttonId)
-        let formattedDate = formatDate(date)
+        let formattedDate = DateAuthority.deviceDayKey(for: date)
 
         if delta >= 0 {
             try await buttonRef.updateData([
@@ -214,10 +194,11 @@ class FirebaseService {
         let buttonCollection = userRef.collection("buttons")
         let snapshot = try await buttonCollection.getDocuments()
         
-        var utcCal = Calendar(identifier: .gregorian)
-        utcCal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let cutoffDate = utcCal.date(byAdding: .day, value: -days, to: Date())!
-        let cutoffStr = formatDate(cutoffDate)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let startToday = cal.startOfDay(for: Date())
+        let cutoffDate = cal.date(byAdding: .day, value: -days, to: startToday)!
+        let cutoffStr = DateAuthority.deviceDayKey(for: cutoffDate)
         
         var result: [String: [String: Int]] = [:]
         for doc in snapshot.documents {

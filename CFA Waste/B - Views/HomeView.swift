@@ -1,12 +1,5 @@
 import SwiftUI
 
-private func isUTCToday(_ d: Date) -> Bool {
-    var cal = Calendar(identifier: .gregorian)
-    cal.timeZone = TimeZone(secondsFromGMT: 0)!
-    let start = cal.startOfDay(for: d)
-    let todayStart = cal.startOfDay(for: Date())
-    return start == todayStart
-}
 
 struct HomeView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
@@ -78,7 +71,7 @@ struct HomeView: View {
                     Image(systemName: "plus")
                         .font(.title2)
                 }
-                .disabled(!isUTCToday(buttonViewModel.selectedDate))
+                .disabled(!DateAuthority.isDeviceToday(buttonViewModel.selectedDate))
 
                 Button(action: {
                     isMovingButtons.toggle()

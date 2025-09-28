@@ -543,20 +543,8 @@ private extension GraphView {
         #endif
     }
 
-    // Always-on today total (LOCAL device day, ignores timezone offsets)
-    private static func localKey(for date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone.current
-        let start = cal.startOfDay(for: date)
-        let df = DateFormatter()
-        df.calendar = cal
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone.current
-        df.dateFormat = "yyyy-MM-dd"
-        return df.string(from: start)
-    }
-
-    private var todayKey: String { Self.localKey(for: Date()) }
+    // Always-on today total (device local day)
+    private var todayKey: String { DateAuthority.todayKey }
     private var todayTotalDollars: Double {
         let items = viewModel.buttonObjects
         let sum = items.reduce(0.0) { partial, item in
@@ -822,15 +810,7 @@ private extension GraphView {
 // MARK: - Date Helpers
 private extension GraphView {
     static func key(for date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let start = cal.startOfDay(for: date)
-        let df = DateFormatter()
-        df.calendar = cal
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone(secondsFromGMT: 0)
-        df.dateFormat = "yyyy-MM-dd"
-        return df.string(from: start)
+        DateAuthority.deviceDayKey(for: date)
     }
 
     static func displayLabel(for date: Date) -> String {
@@ -872,11 +852,14 @@ private extension GraphView {
     // Parse yyyy-MM-dd back to Date
     static func dateFromKey(_ key: String) -> Date? {
         guard !key.isEmpty else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
         let df = DateFormatter()
-        df.calendar = Calendar(identifier: .gregorian)
+        df.calendar = cal
         df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone(secondsFromGMT: 0)
+        df.timeZone = .current
         df.dateFormat = "yyyy-MM-dd"
+        // Returns a Date at local start-of-day for that key
         return df.date(from: key)
     }
 }
