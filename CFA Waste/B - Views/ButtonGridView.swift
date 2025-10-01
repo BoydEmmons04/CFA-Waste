@@ -215,7 +215,7 @@ struct ButtonGridView: View {
     
     // MARK: - Create Long Press Gesture
     private func createLongPressGesture(for button: ButtonObject) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.3)
+        LongPressGesture(minimumDuration: 0.2)
             .onEnded { _ in
                 if !isLongPressActive {
                     handleLongPress(button)
