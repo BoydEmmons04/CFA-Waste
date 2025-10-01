@@ -63,23 +63,48 @@ struct GroupsHostView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                TabView(selection: $vm.selectedGroupId) {
-                    ForEach(vm.groups, id: \.id) { group in
-                        // Render the existing grid for the selected group
+                VStack(spacing: 8) {
+                    // Non-swipe group selector (horizontally scrollable chips)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(vm.groups, id: \.id) { group in
+                                let isSelected = (vm.selectedGroupId == group.id)
+                                Button(action: { vm.selectedGroupId = group.id }) {
+                                    HStack(spacing: 6) {
+                                        Text(group.title)
+                                            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule().fill(isSelected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
+                                    )
+                                    .overlay(
+                                        Capsule().stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
+                                    )
+                                    .foregroundColor(isSelected ? Color.accentColor : Color.primary)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+                    }
+
+                    // Selected group's grid (no outer swipe; inner pager remains active)
+                    if let currentId = vm.selectedGroupId {
                         ButtonGridView(
                             viewModel: buttonGridVM,
-                            group: group.id,
+                            group: currentId,
                             isMoving: $isMoving,
                             selectedDate: selectedDate,
                             availableGroups: vm.groups
                         )
-                        .tabItem {
-                            if let icon = group.icon { Image(systemName: icon) }
-                            Text(group.title)
-                        }
-                        .tag(Optional(group.id)) // selection is Optional<String>
+                        .id(currentId) // ensure content refreshes when switching groups
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .contentShape(Rectangle()) // ensure full hit area for swipes
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity) // let grid expand to full space
             }
         }
     }
