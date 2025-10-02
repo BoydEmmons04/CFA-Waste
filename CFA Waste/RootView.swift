@@ -9,6 +9,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase  // allows the view to detect app states, active, inactive, and background
+    // These view models are passed in when this view is called using . notation. the var name mathes and then it is defined as using the cooresponding view model
     @EnvironmentObject var buttonGridVM: ButtonGridViewModel  // Pulls in the buttongridviewmodel to fetch buttons on appear
     @EnvironmentObject var authViewModel: AuthViewModel  // authentication view model to pass into other views
     var body: some View {
