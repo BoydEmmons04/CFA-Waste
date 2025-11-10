@@ -15,6 +15,7 @@ struct ButtonGridView: View {
     @State private var isIncrementing = false // Prevent duplicate increments
     @State private var shakePhase: CGFloat = 0
     @State private var lockPulse: Bool = false
+    @State private var pageIndex: Int = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -43,23 +44,48 @@ struct ButtonGridView: View {
                     } else {
                         // Paginate buttons based on the current grid size.
                         let pages = paginateButtons(viewModel.buttons(for: group), rowsPerPage: rowsPerPage, columnsCount: columnsCount)
-                        TabView {
-                            ForEach(Array(pages.enumerated()), id: \.offset) { (_, pageButtons) in
+                        TabView(selection: $pageIndex) {
+                            ForEach(Array(pages.enumerated()), id: \.offset) { (index, pageButtons) in
                                 LazyVGrid(columns: gridColumns, spacing: verticalSpacing) {
                                     ForEach(pageButtons) { button in
                                         ButtonView(button: button, selectedDate: selectedDate) { pressedButton, date in
                                             handleButtonPress(pressedButton, date: date)
                                         }
                                         .disabled(!DateAuthority.isDeviceToday(selectedDate))
-                                        // Attach gestures: drag has higher priority than long press.
-                                        .highPriorityGesture(createDragGesture(for: button))
-                                        .gesture(createLongPressGesture(for: button))
+                                        // Allow TabView to own horizontal swipes; keep drag and long-press simultaneous
+                                        .simultaneousGesture(createDragGesture(for: button))
+                                        .simultaneousGesture(createLongPressGesture(for: button))
+                                        .contentShape(Rectangle())
                                     }
                                 }
                                 .padding()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .tag(index)
                             }
                         }
                         .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                        .overlay(alignment: .bottom) {
+                            // Custom page dots below the grid
+                            let totalPages = pages.count
+                            if totalPages > 1 {
+                                HStack(spacing: 6) {
+                                    ForEach(0..<totalPages, id: \.self) { i in
+                                        Circle()
+                                            .frame(width: 7, height: 7)
+                                            .opacity(i == pageIndex ? 1.0 : 0.3)
+                                            .scaleEffect(i == pageIndex ? 1.1 : 1.0)
+                                            .animation(.easeInOut(duration: 0.2), value: pageIndex)
+                                    }
+                                }
+                                .padding(.bottom, 8)
+                                .foregroundStyle(Color.secondary)
+                                .allowsHitTesting(false) // don't block grid taps/swipes
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Page \(pageIndex + 1) of \(totalPages)")
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
                 
@@ -67,6 +93,7 @@ struct ButtonGridView: View {
                 if !DateAuthority.isDeviceToday(selectedDate) && !showRadialView {
                     Color.black.opacity(0.35)
                         .ignoresSafeArea()
+                        .allowsHitTesting(false)
 
                     VStack(spacing: 10) {
                         // Hint banner
@@ -96,6 +123,7 @@ struct ButtonGridView: View {
                     .foregroundColor(.white)
                     .padding(.top, 30)
                     .frame(maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
                     .onAppear {
                         // Start subtle pulse for arrow and shake for lock icon
                         lockPulse = true
@@ -110,6 +138,7 @@ struct ButtonGridView: View {
                         .foregroundColor(.white)
                         .modifier(ShakeEffect(animatableData: shakePhase))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .allowsHitTesting(false)
                 }
                 
                 // If the RadialView is shown, overlay it
@@ -227,8 +256,11 @@ struct ButtonGridView: View {
     private func createDragGesture(for button: ButtonObject) -> some Gesture {
         DragGesture(minimumDistance: 20, coordinateSpace: .local)
             .onEnded { value in
-                guard value.translation.height > 20,
-                      DateAuthority.isDeviceToday(selectedDate) else { return }
+                let dx = abs(value.translation.width)
+                let dy = value.translation.height
+                guard dy > 20, dy > dx,
+                      DateAuthority.isDeviceToday(selectedDate),
+                      !isLongPressActive else { return }
                 Task {
                     await incrementTally(button, by: -1, date: selectedDate)
                 }

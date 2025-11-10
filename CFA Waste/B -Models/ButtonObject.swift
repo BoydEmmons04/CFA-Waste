@@ -12,7 +12,6 @@ struct ButtonObject: Identifiable, Codable, Hashable {
     var order: Int // Used for ordering buttons
     var timestamp: Date // Creation or last-modified timestamp
 
-    // Map Swift `group` to Firestore field `groupId` to align with new queries
     enum CodingKeys: String, CodingKey {
         case id
         case image
@@ -20,9 +19,10 @@ struct ButtonObject: Identifiable, Codable, Hashable {
         case name
         case cost
         case tallies
-        case group = "groupId"   // <-- Firestore uses `groupId`
         case order
         case timestamp
+        case groupIdRaw = "groupId"   // new schema
+        case groupLegacyRaw = "group" // legacy schema
     }
 
     // MARK: - Initializer
@@ -46,6 +46,37 @@ struct ButtonObject: Identifiable, Codable, Hashable {
         self.group = group
         self.order = order
         self.timestamp = timestamp
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        image = try c.decodeIfPresent(String.self, forKey: .image) ?? ""
+        color = try c.decodeIfPresent(String.self, forKey: .color) ?? "#FFFFFF"
+        name = try c.decode(String.self, forKey: .name)
+        cost = try c.decode(Double.self, forKey: .cost)
+        tallies = try c.decodeIfPresent([String: Int].self, forKey: .tallies) ?? [:]
+        order = try c.decodeIfPresent(Int.self, forKey: .order) ?? 0
+        timestamp = try c.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+
+        // Accept either new `groupId` or legacy `group`; prefer `groupId` if present
+        let gid = try c.decodeIfPresent(String.self, forKey: .groupIdRaw)
+        let legacy = try c.decodeIfPresent(String.self, forKey: .groupLegacyRaw)
+        group = (gid?.isEmpty == false ? gid : legacy) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(image, forKey: .image)
+        try c.encode(color, forKey: .color)
+        try c.encode(name, forKey: .name)
+        try c.encode(cost, forKey: .cost)
+        try c.encode(tallies, forKey: .tallies)
+        try c.encode(order, forKey: .order)
+        try c.encode(timestamp, forKey: .timestamp)
+        // Always encode canonical `group` as `groupId` in Firestore
+        try c.encode(group, forKey: .groupIdRaw)
     }
 
     // MARK: - Tally Accessors
@@ -80,6 +111,10 @@ struct ButtonObject: Identifiable, Codable, Hashable {
 
     private static var currentDate: String {
         dateFormatter.string(from: Date())
+    }
+
+    var normalizedGroupKey: String {
+        group.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
 

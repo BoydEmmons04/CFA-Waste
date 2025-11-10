@@ -363,9 +363,15 @@ class ButtonGridViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Filter Buttons by Group
+    // MARK: - Filter Buttons by Group (uses unified `group` field)
     func buttons(for group: String) -> [ButtonObject] {
-        buttons.filter { $0.group == group }
+        let key = group.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return buttons
+            .filter { btn in
+                let candidate = btn.group.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return candidate == key
+            }
+            .sorted { $0.order < $1.order }
     }
 
     // MARK: - Reorder Buttons
@@ -483,12 +489,15 @@ class ButtonGridViewModel: ObservableObject {
     private func applySnapshot(_ snapshot: [ButtonObject], for date: Date) {
         if DateAuthority.isDeviceToday(date) {
             let key = DateAuthority.deviceDayKey(for: date)
-            let existing = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0.tallies[key] ?? 0) })
+            let existingTallies = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0.tallies[key] ?? 0) })
             let pending = self.pendingSyncs
 
-            let merged: [ButtonObject] = snapshot.map { btn in
+            // Start from current in-memory buttons to preserve legacy docs not returned by the filtered query
+            var byId = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0) })
+
+            for btn in snapshot {
                 var b = btn
-                let local = existing[btn.id] ?? 0
+                let local = existingTallies[btn.id] ?? 0
                 let server = btn.tallies[key] ?? 0
                 let pendingKey = "\(btn.id)|\(key)"
                 if pending[pendingKey] != nil {
@@ -496,19 +505,25 @@ class ButtonGridViewModel: ObservableObject {
                 } else {
                     b.tallies[key] = server
                 }
-                return b
+                byId[btn.id] = b
             }
-            self.buttons = merged
+
+            self.buttons = Array(byId.values)
             self.sortButtons()
         } else {
             let key = DateAuthority.deviceDayKey(for: date)
-            let coerced: [ButtonObject] = snapshot.map { btn in
+
+            // Preserve existing buttons, updating/adding those from the snapshot
+            var byId = Dictionary(uniqueKeysWithValues: self.buttons.map { ($0.id, $0) })
+
+            for btn in snapshot {
                 var b = btn
                 let onlyThisDay = b.tallies[key] ?? 0
                 b.tallies = [key: onlyThisDay]
-                return b
+                byId[btn.id] = b
             }
-            self.buttons = coerced
+
+            self.buttons = Array(byId.values)
             self.sortButtons()
         }
     }

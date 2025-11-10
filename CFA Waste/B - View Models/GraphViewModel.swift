@@ -180,7 +180,13 @@ class GraphViewModel: ObservableObject {
                     : (lhs.order < rhs.order)
             }) {
                 var groupItems: [GroupedWasteItem] = []
-                for button in buttons.filter({ $0.group == group.id || $0.group == group.name }) {
+                let idKey = group.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let nameKey = group.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let filtered = buttons.filter { btn in
+                    let g = btn.group.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    return g == idKey || g == nameKey
+                }
+                for button in filtered {
                     let totalWasteCost = keys.reduce(0.0) { subtotal, k in
                         subtotal + (Double(button.tallies[k] ?? 0) * button.cost)
                     }
@@ -211,11 +217,16 @@ class GraphViewModel: ObservableObject {
             let data = document.data()
 
             if let name = data["name"] as? String,
-               let group = data["group"] as? String,
                let order = data["order"] as? Int {
                 let image = data["image"] as? String ?? ""
                 let color = data["color"] as? String ?? "#FFFFFF"
                 let cost = (data["cost"] as? Double) ?? Double((data["cost"] as? Int) ?? 0)
+
+                // Prefer new `groupId`, fall back to legacy `group`
+                let gid = (data["groupId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let legacy = (data["group"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let groupUnified = (gid?.isEmpty == false ? gid! : (legacy ?? ""))
+
                 // Read nested map and flat dotted; use the higher of the two
                 let allTallies = data["tallies"] as? [String: Int] ?? [:]
                 let nestedValue = allTallies[date] ?? 0
@@ -230,7 +241,7 @@ class GraphViewModel: ObservableObject {
                     name: name,
                     cost: cost,
                     tallies: tallies,
-                    group: group,
+                    group: groupUnified,
                     order: order
                 )
             } else {
@@ -266,7 +277,9 @@ class GraphViewModel: ObservableObject {
             let image = (data["image"] as? String) ?? ""
             let color = (data["color"] as? String) ?? "#FFFFFF"
             let cost  = (data["cost"] as? Double) ?? Double((data["cost"] as? Int) ?? 0)
-            let group = (data["group"] as? String) ?? ""
+            let gid = (data["groupId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let legacy = (data["group"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let group = (gid?.isEmpty == false ? gid! : (legacy ?? ""))
             let order = (data["order"] as? Int) ?? 0
 
             let nested = data["tallies"] as? [String:Int] ?? [:]
