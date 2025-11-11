@@ -220,8 +220,15 @@ private extension GraphView {
                 } else {
                     ScrollView(.vertical, showsIndicators: true) {
                         let columns = [GridItem(.adaptive(minimum: 240, maximum: 300), spacing: 10)]
+                        let sortedItems = selectedItems.sorted { a, b in
+                            let ta = columnTotals[a.id]?.0 ?? 0
+                            let tb = columnTotals[b.id]?.0 ?? 0
+                            if ta != tb { return ta > tb } // higher tallies first
+                            if a.order != b.order { return a.order < b.order } // tie-breaker by order
+                            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+                        }
                         LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(selectedItems, id: \.id) { item in
+                            ForEach(sortedItems, id: \.id) { item in
                                 let totals = columnTotals[item.id] ?? (0, 0.0)
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack(spacing: 10) {
@@ -361,8 +368,15 @@ private extension GraphView {
                     // SUMMARY GRID — no horizontal scrolling
                     ScrollView(.vertical, showsIndicators: true) {
                         let columns = [GridItem(.adaptive(minimum: 260, maximum: 360), spacing: 12)]
+                        let sortedItems = selectedItems.sorted { a, b in
+                            let ta = columnTotals[a.id]?.0 ?? 0
+                            let tb = columnTotals[b.id]?.0 ?? 0
+                            if ta != tb { return ta > tb } // higher tallies first
+                            if a.order != b.order { return a.order < b.order } // tie-breaker by order
+                            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+                        }
                         LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(selectedItems, id: \.id) { item in
+                            ForEach(sortedItems, id: \.id) { item in
                                 let totals = columnTotals[item.id] ?? (0, 0.0)
                                 VStack(alignment: .leading, spacing: 10) {
                                     HStack(spacing: 10) {
@@ -701,8 +715,8 @@ private extension GraphView {
 
     /// Refresh today's total, last week's same-weekday total, and percent change using the ViewModel.
     func refreshBannerTotals() async {
-        let filterIDs: Set<String>? = (selectedGroup == allGroupToken) ? nil : Set(itemsInSelectedGroup.map { $0.id })
-        let result = await viewModel.getTodayWoW(filterIDs: filterIDs)
+        // Always compute banner from ALL items/groups (unfiltered)
+        let result = await viewModel.getTodayWoW()
         await MainActor.run {
             bannerToday = result.today
             bannerLastWeek = result.lastWeek
