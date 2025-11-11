@@ -40,6 +40,11 @@ struct GraphView: View {
     @State private var detailItem: ButtonObject? = nil
     @State private var showSignOutConfirm: Bool = false
 
+    // Banner totals (today vs last week) sourced from GraphViewModel
+    @State private var bannerToday: Double = 0
+    @State private var bannerLastWeek: Double = 0
+    @State private var bannerPercent: Double = 0
+
     // MARK: - Report scope & dates
     @State private var scope: ReportScope = .daily
     @State private var startDate: Date = Calendar.current.startOfDay(for: Date())
@@ -90,6 +95,7 @@ struct GraphView: View {
             if let e = Self.dateFromKey(storedEndKey) { endDate = e }
             selectedGroup = storedGroup
             Task { await hydrateData() }
+            Task { await refreshBannerTotals() }
             // Subtle initial pulse
             withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                 bannerPulse.toggle()
@@ -115,6 +121,7 @@ struct GraphView: View {
         .onChange(of: selectedGroup) { newValue in
             storedGroup = newValue
             Task { await hydrateData() }
+            Task { await refreshBannerTotals() }
         }
         .sheet(item: $detailItem) { item in
             DetailBreakdownView(
@@ -545,13 +552,23 @@ private extension GraphView {
 
     // Always-on today total (device local day)
     private var todayKey: String { DateAuthority.todayKey }
-    private var todayTotalDollars: Double {
-        let items = viewModel.buttonObjects
-        let sum = items.reduce(0.0) { partial, item in
-            let tally = tallyValue(for: item, dateKey: todayKey)
-            return partial + (Double(tally) * item.cost)
-        }
-        return sum
+    private var todayTotalDollars: Double { bannerToday }
+
+    // Previous week same weekday key and total
+    private var lastWeekKey: String {
+        let cal = Calendar.current
+        let lastWeek = cal.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        return Self.key(for: lastWeek)
+    }
+
+    private var lastWeekTotalDollars: Double { bannerLastWeek }
+
+    // Week-over-week percentage change (always returns a value)
+    private var wowChange: (text: String, color: Color) {
+        let pct = bannerPercent
+        let formatted = String(format: "%@%.1f%%", pct >= 0 ? "+" : "", pct)
+        let color: Color = pct > 0 ? .red : (pct < 0 ? .green : .secondary)
+        return (formatted, color)
     }
 
     private var todayBanner: some View {
@@ -559,10 +576,19 @@ private extension GraphView {
             Text("Today's Total")
                 .font(.title2.weight(.semibold))
                 .multilineTextAlignment(.center)
-            Text("$\(todayTotalDollars, specifier: "%.2f")")
-                .font(.title.weight(.bold))
-                .monospacedDigit()
-                .multilineTextAlignment(.center)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("$\(todayTotalDollars, specifier: "%.2f")")
+                    .font(.title.weight(.bold))
+                    .monospacedDigit()
+                let wow = wowChange
+                Text(wow.text)
+                    .font(.headline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundColor(wow.color)
+                    .transition(.opacity)
+            }
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
@@ -670,6 +696,17 @@ private extension GraphView {
         await MainActor.run {
             hydratedItems = Array(fetched)
             perItemTotals = totals
+        }
+    }
+
+    /// Refresh today's total, last week's same-weekday total, and percent change using the ViewModel.
+    func refreshBannerTotals() async {
+        let filterIDs: Set<String>? = (selectedGroup == allGroupToken) ? nil : Set(itemsInSelectedGroup.map { $0.id })
+        let result = await viewModel.getTodayWoW(filterIDs: filterIDs)
+        await MainActor.run {
+            bannerToday = result.today
+            bannerLastWeek = result.lastWeek
+            bannerPercent = result.percent
         }
     }
 
@@ -896,3 +933,4 @@ struct GraphView_Previews: PreviewProvider {
         GraphView(userId: "preview")
     }
 }
+

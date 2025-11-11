@@ -446,9 +446,51 @@ class GraphViewModel: ObservableObject {
         }
     }
 
+
     /// Convenience: per-item totals for a single day
     func getPerItemDailyTotals(on date: Date, filterIDs: Set<String>? = nil) async -> [String: (tally: Int, cost: Double)] {
         return await getPerItemTotals(from: date, to: date, filterIDs: filterIDs)
+    }
+
+    // MARK: - Week-over-Week (same weekday) helpers
+    /// Device-local start of day for stable day comparisons regardless of time of day
+    private func deviceLocalStartOfDay(_ date: Date) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        return cal.startOfDay(for: date)
+    }
+
+    /// Returns the same weekday one week (7 days) prior in device-local time.
+    private func sameWeekdayLastWeek(from date: Date) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let start = cal.startOfDay(for: date)
+        return cal.date(byAdding: .day, value: -7, to: start) ?? start
+    }
+
+    /// Convenience: total cost for a single day (optionally filtered to a set of item IDs)
+    @MainActor
+    func getDailyCost(on date: Date, filterIDs: Set<String>? = nil) async -> Double {
+        let start = deviceLocalStartOfDay(date)
+        let perItem = await getPerItemDailyTotals(on: start, filterIDs: filterIDs)
+        return perItem.values.reduce(0.0) { $0 + $1.1 }
+    }
+
+    /// Convenience: today's cost, last week's same-weekday cost, and percent change.
+    /// Percent is ((today - lastWeek) / lastWeek) * 100. If lastWeek is 0, returns 0% when today is 0, otherwise +100%.
+    @MainActor
+    func getTodayWoW(filterIDs: Set<String>? = nil) async -> (today: Double, lastWeek: Double, percent: Double) {
+        let todayDate = Date()
+        let lastWeekDate = sameWeekdayLastWeek(from: todayDate)
+        let todayTotal = await getDailyCost(on: todayDate, filterIDs: filterIDs)
+        let lastWeekTotal = await getDailyCost(on: lastWeekDate, filterIDs: filterIDs)
+        let percent: Double
+        if lastWeekTotal == 0 {
+            percent = todayTotal == 0 ? 0.0 : 100.0
+        } else {
+            percent = ((todayTotal - lastWeekTotal) / lastWeekTotal) * 100.0
+        }
+        return (todayTotal, lastWeekTotal, percent)
     }
 
     /// Convenience: per-item totals for 7 days FORWARD from start
