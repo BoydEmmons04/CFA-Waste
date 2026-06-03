@@ -40,10 +40,12 @@ struct GraphView: View {
     @State private var detailItem: ButtonObject? = nil
     @State private var showSignOutConfirm: Bool = false
 
-    // Banner totals (today vs last week) sourced from GraphViewModel
-    @State private var bannerToday: Double = 0
-    @State private var bannerLastWeek: Double = 0
-    @State private var bannerPercent: Double = 0
+    // Settings presentation
+    @State private var showSettings: Bool = false
+
+    // Banner metrics (mode-sensitive) sourced from GraphViewModel
+    @State private var bannerAmount: Double = 0       // total for current mode (day / WTD / MTD)
+    @State private var bannerPercent: Double = 0      // percent change vs last comparable period
 
     // MARK: - Report scope & dates
     @State private var scope: ReportScope = .daily
@@ -63,6 +65,7 @@ struct GraphView: View {
                 iphoneBody
             }
         }
+        .typeErased()
         .padding(.top, 8)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -80,6 +83,13 @@ struct GraphView: View {
                             .foregroundColor(.red)
                     }
                     .tint(.red)
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.headline)
+                        .imageScale(.medium)
                 }
             }
         }
@@ -123,6 +133,9 @@ struct GraphView: View {
             Task { await hydrateData() }
             Task { await refreshBannerTotals() }
         }
+        .onChange(of: viewModel.topBannerMode) { _ in
+            Task { await refreshBannerTotals() }
+        }
         .sheet(item: $detailItem) { item in
             DetailBreakdownView(
                 item: item,
@@ -130,6 +143,12 @@ struct GraphView: View {
                 rowData: rowData,
                 scope: scope
             )
+        }
+        .sheet(isPresented: $showSettings) {
+            GraphSettingsView()
+                .environmentObject(viewModel)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -564,18 +583,16 @@ private extension GraphView {
         #endif
     }
 
-    // Always-on today total (device local day)
-    private var todayKey: String { DateAuthority.todayKey }
-    private var todayTotalDollars: Double { bannerToday }
-
-    // Previous week same weekday key and total
-    private var lastWeekKey: String {
-        let cal = Calendar.current
-        let lastWeek = cal.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-        return Self.key(for: lastWeek)
+    // Banner title and amount reflect the ViewModel's TopBannerSetting
+    private var bannerTitleText: String {
+        switch viewModel.topBannerMode {
+        case .daily:   return "Today's Total"
+        case .weekly:  return "Week to Date"
+        case .monthly: return "Month to Date"
+        @unknown default: return "Total"
+        }
     }
-
-    private var lastWeekTotalDollars: Double { bannerLastWeek }
+    private var bannerTotalDollars: Double { bannerAmount }
 
     // Week-over-week percentage change (always returns a value)
     private var wowChange: (text: String, color: Color) {
@@ -587,11 +604,11 @@ private extension GraphView {
 
     private var todayBanner: some View {
         VStack(spacing: 4) {
-            Text("Today's Total")
+            Text(bannerTitleText)
                 .font(.title2.weight(.semibold))
                 .multilineTextAlignment(.center)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("$\(todayTotalDollars, specifier: "%.2f")")
+                Text("$\(bannerTotalDollars, specifier: "%.2f")")
                     .font(.title.weight(.bold))
                     .monospacedDigit()
                 let wow = wowChange
@@ -713,13 +730,13 @@ private extension GraphView {
         }
     }
 
-    /// Refresh today's total, last week's same-weekday total, and percent change using the ViewModel.
+    /// Refresh the banner amount and percent change using the ViewModel's current TopBannerSetting.
     func refreshBannerTotals() async {
-        // Always compute banner from ALL items/groups (unfiltered)
-        let result = await viewModel.getTodayWoW()
+        // Compute the banner using the ViewModel's current TopBannerSetting (unfiltered, across all items)
+        // Expects ViewModel.getBannerAmountAndDelta() -> (amount: Double, percent: Double)
+        let result = await viewModel.getBannerAmountAndDelta()
         await MainActor.run {
-            bannerToday = result.today
-            bannerLastWeek = result.lastWeek
+            bannerAmount = result.amount
             bannerPercent = result.percent
         }
     }
@@ -940,6 +957,12 @@ fileprivate struct ColorSwatch: View {
 }
 
 
+// Helper to type-erase large SwiftUI bodies
+private extension View {
+    /// Cuts down generic type growth in large SwiftUI bodies.
+    @inline(__always)
+    func typeErased() -> AnyView { AnyView(self) }
+}
 
 // MARK: - Preview
 struct GraphView_Previews: PreviewProvider {

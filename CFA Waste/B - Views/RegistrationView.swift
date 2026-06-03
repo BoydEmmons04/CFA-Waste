@@ -24,6 +24,17 @@ struct RegistrationView: View {
                         .padding(.bottom, 20)
 
                     VStack(spacing: 20) {
+                        // NAME Field
+                        TextField("Name", text: $viewModel.name)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled(true)
+                            .padding()
+                            .frame(width: 336, height: 50)
+                            .background(Color.white)
+                            .foregroundColor(.black)
+                            .font(.system(size: 18, weight: .bold))
+                            .cornerRadius(10)
+
                         // PIN Fields
                         SecureField("Enter 5-digit PIN", text: $viewModel.pin)
                             .keyboardType(.numberPad)

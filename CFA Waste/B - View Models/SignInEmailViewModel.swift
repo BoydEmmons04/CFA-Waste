@@ -1,5 +1,6 @@
 import Foundation
 import FirebaseAuth
+import FirebaseFirestore
 import Combine
 
 @MainActor
@@ -29,6 +30,12 @@ final class SignInEmailViewModel: ObservableObject {
             do {
                 let returnedUserData = try await AuthenticationManager.shared.signIn(pin: signInModel.pin)
                 print("Success: \(returnedUserData)")
+
+                // One-time, idempotent backfill of account docs
+                if let uid = Auth.auth().currentUser?.uid {
+                    await backfillAccountDocsIfNeeded(uid: uid, pin: signInModel.pin)
+                }
+
                 await MainActor.run {
                     isSignedIn = true
                     errorMessage = ""
@@ -43,6 +50,32 @@ final class SignInEmailViewModel: ObservableObject {
             await MainActor.run {
                 isLoading = false
             }
+        }
+    }
+
+    /// One-time backfill: ensure users/{uid}/account/ has Name, Number, TopBannerSetting.
+    /// This is idempotent and safe to call on every sign-in.
+    private func backfillAccountDocsIfNeeded(uid: String, pin: String) async {
+        let db = Firestore.firestore()
+        let account = db.collection("users").document(uid).collection("account")
+
+        do {
+            let snapshot = try await account.getDocuments()
+            let existing = Set(snapshot.documents.map { $0.documentID })
+
+            if !existing.contains("Name") {
+                try await account.document("Name").setData(["value": ""], merge: true)
+            }
+            if !existing.contains("Number") {
+                let pinInt = Int(pin) ?? 0
+                try await account.document("Number").setData(["value": pinInt], merge: true)
+            }
+            if !existing.contains("TopBannerSetting") {
+                try await account.document("TopBannerSetting").setData(["value": "default"], merge: true)
+            }
+        } catch {
+            // Non-fatal: log and continue sign-in flow
+            print("Backfill error: \(error)")
         }
     }
 

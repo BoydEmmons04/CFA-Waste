@@ -29,6 +29,13 @@ class GraphViewModel: ObservableObject {
     @Published var selectedButton: ButtonObject? = nil
     @Published var monthlyItemData: [(date: String, tally: Int)] = []
     @Published var groups: [GroupRef] = []
+
+    // Banner mode (driven by users/{uid}/account/TopBannerSetting)
+    enum BannerMode: String, CaseIterable { case daily = "default", weekly = "weekly", monthly = "monthly" }
+    @Published var topBannerMode: BannerMode = .daily
+
+    // Listener for account settings (TopBannerSetting)
+    private var accountListener: ListenerRegistration?
     
     private lazy var monthDayFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -48,6 +55,7 @@ class GraphViewModel: ObservableObject {
         self.userId = userId
 
         startGroupsListener()
+        startAccountSettingsListener()
 
         $groups
             .sink { [weak self] _ in
@@ -351,6 +359,71 @@ class GraphViewModel: ObservableObject {
     }
 
     // MARK: - Totals Over Timeframes (Overall)
+    // MARK: - Banner Total for Current Mode
+    /// Returns the total cost for the banner based on `topBannerMode`.
+    /// - Note: Uses device-local day boundaries. Weekly = current week-to-date (Sun..today); Monthly = month-to-date.
+    @MainActor
+    func getBannerTotalForCurrentMode() async -> Double {
+        let today = deviceLocalStartOfDay(Date())
+        switch topBannerMode {
+        case .daily:
+            let (_, cost) = await getDailyTotal(on: today)
+            return cost
+        case .weekly:
+            // Current week-to-date: Sunday through today
+            let start = sundayOfWeek(for: today)
+            let (_, cost) = await getCustomTotal(from: start, to: today)
+            return cost
+        case .monthly:
+            // Month-to-date: first of month through today
+            let start = startOfMonth(for: today)
+            let (_, cost) = await getCustomTotal(from: start, to: today)
+            return cost
+        }
+    }
+
+    // MARK: - Banner amount + delta percent for current mode
+    /// Returns (amount, percentDelta) where:
+    ///  - Daily: amount = today; delta vs same weekday last week
+    ///  - Weekly: amount = current week-to-date (Sun..today); delta vs last full week (Sun..Sat)
+    ///  - Monthly: amount = MTD; delta vs last full month
+    @MainActor
+    func getBannerAmountAndDelta() async -> (amount: Double, percent: Double) {
+        let today = deviceLocalStartOfDay(Date())
+        switch topBannerMode {
+        case .daily:
+            let todayCost = await getDailyCost(on: today)
+            let lastWeekCost = await getDailyCost(on: sameWeekdayLastWeek(from: today))
+            let pct = percentChange(current: todayCost, previous: lastWeekCost)
+            return (todayCost, pct)
+
+        case .weekly:
+            // Current week to date
+            let thisSunday = sundayOfWeek(for: today)
+            let (_, thisWeekCost) = await getCustomTotal(from: thisSunday, to: today)
+            // Last full week (Sun..Sat)
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = .current
+            let lastWeekSunday = cal.date(byAdding: .day, value: -7, to: thisSunday) ?? thisSunday
+            let lastWeekSaturday = cal.date(byAdding: .day, value: 6, to: lastWeekSunday) ?? lastWeekSunday
+            let (_, lastWeekCost) = await getCustomTotal(from: lastWeekSunday, to: lastWeekSaturday)
+            let pct = percentChange(current: thisWeekCost, previous: lastWeekCost)
+            return (thisWeekCost, pct)
+
+        case .monthly:
+            // Current month to date
+            let startThisMonth = startOfMonth(for: today)
+            let (_, mtdCost) = await getCustomTotal(from: startThisMonth, to: today)
+            // Last full month
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = .current
+            let startLastMonth = cal.date(byAdding: .month, value: -1, to: startThisMonth) ?? startThisMonth
+            let endLastMonth = cal.date(byAdding: .day, value: -1, to: startThisMonth) ?? startThisMonth
+            let (_, lastMonthCost) = await getCustomTotal(from: startLastMonth, to: endLastMonth)
+            let pct = percentChange(current: mtdCost, previous: lastMonthCost)
+            return (mtdCost, pct)
+        }
+    }
     /// Daily overall totals for a single date (across all items)
     func getDailyTotal(on date: Date) async -> (tally: Int, cost: Double) {
         let key = formatDate(date)
@@ -466,6 +539,40 @@ class GraphViewModel: ObservableObject {
         cal.timeZone = .current
         let start = cal.startOfDay(for: date)
         return cal.date(byAdding: .day, value: -7, to: start) ?? start
+    }
+
+    /// Sunday (device-local) for the week containing `date`.
+    private func sundayOfWeek(for date: Date) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let start = cal.startOfDay(for: date)
+        let weekday = cal.component(.weekday, from: start) // 1 = Sunday ... 7 = Saturday (Gregorian)
+        let daysToSubtract = (weekday - 1)
+        return cal.date(byAdding: .day, value: -daysToSubtract, to: start) ?? start
+    }
+
+    /// First day of the month (device-local) for the month containing `date`.
+    private func startOfMonth(for date: Date) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let comps = cal.dateComponents([.year, .month], from: date)
+        return cal.date(from: comps) ?? deviceLocalStartOfDay(date)
+    }
+
+    /// Last day of the month (device-local) for the month containing `date`.
+    private func endOfMonth(for date: Date) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let start = startOfMonth(for: date)
+        let nextMonth = cal.date(byAdding: .month, value: 1, to: start) ?? start
+        let lastOfMonth = cal.date(byAdding: .day, value: -1, to: nextMonth) ?? start
+        return lastOfMonth
+    }
+
+    /// ((current - previous)/previous)*100 with sensible zero handling
+    private func percentChange(current: Double, previous: Double) -> Double {
+        if previous == 0 { return current == 0 ? 0.0 : 100.0 }
+        return ((current - previous) / previous) * 100.0
     }
 
     /// Convenience: total cost for a single day (optionally filtered to a set of item IDs)
@@ -624,6 +731,8 @@ class GraphViewModel: ObservableObject {
     deinit {
         groupsListener?.remove()
         groupsListener = nil
+        accountListener?.remove()
+        accountListener = nil
     }
 }
 
@@ -664,6 +773,51 @@ private extension GraphViewModel {
                     return a.order < b.order
                 }
             }
+    }
+}
+
+// MARK: - Account Settings Listener (TopBannerSetting)
+private extension GraphViewModel {
+    func startAccountSettingsListener() {
+        accountListener?.remove()
+        let accountCol = db.collection("users").document(userId).collection("account")
+        accountListener = accountCol.addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error {
+                print("❌ Account settings listen error: \(error.localizedDescription)")
+                return
+            }
+            guard let docs = snapshot?.documents else { return }
+            for doc in docs {
+                if doc.documentID == "TopBannerSetting" {
+                    let raw = (doc.data()["value"] as? String) ?? BannerMode.daily.rawValue
+                    let mode = BannerMode(rawValue: raw) ?? .daily
+                    DispatchQueue.main.async { self.topBannerMode = mode }
+                }
+            }
+        }
+    }
+}
+
+
+/* MARK: - Account Settings Save */
+extension GraphViewModel {
+    /// Persist the banner mode to Firestore and reflect it locally.
+    @MainActor
+    func saveTopBannerMode(_ newMode: BannerMode) async {
+        do {
+            let ref = db.collection("users")
+                .document(userId)
+                .collection("account")
+                .document("TopBannerSetting")
+            try await ref.setData([
+                "value": newMode.rawValue,
+                "updatedAt": FieldValue.serverTimestamp()
+            ], merge: true)
+            self.topBannerMode = newMode
+        } catch {
+            print("❌ saveTopBannerMode error: \(error)")
+        }
     }
 }
 
